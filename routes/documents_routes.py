@@ -2,7 +2,11 @@ from flask import Blueprint , jsonify , request
 from models import Documents , db
 import datetime
 import uuid
+from flask_cors import CORS
+
 documents_bp = Blueprint('documents', __name__)
+
+CORS(documents_bp)
 
 #get all documents
 @documents_bp.route('/documents' , methods = ['GET'])

@@ -2,7 +2,11 @@ from flask import Blueprint , jsonify , request
 from models import  Projectvendor, db
 import datetime
 import uuid
+from flask_cors import CORS
+
 project_vendor_bp = Blueprint('project_vendor', __name__)
+
+CORS(project_vendor_bp)
 
 #get all project_vendors
 @project_vendor_bp.route('/project_vendors' , methods = ['GET'])

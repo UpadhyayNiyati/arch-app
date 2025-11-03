@@ -1,10 +1,16 @@
 from flask import Blueprint , jsonify , request
-from models import Boards , db , Projects , PinTag ,Pin,Tag
+from models import Boards , db , Projects , PinTag ,Pin,Tag,Upload_Files
 import uuid
 from flask import current_app
 import datetime
+from flask_cors import CORS
+import logging
+import json
+from .upload_files_routes import upload_board_files , update_board_files
 
 boards_bp = Blueprint('board' , __name__)
+
+CORS(boards_bp)
 
 def allowed_file(filename):
     # This checks the file extension against a set of allowed types.
@@ -17,19 +23,33 @@ def allowed_file(filename):
 @boards_bp.route('/boards', methods=['GET'])
 def get_all_boards():
     try:
+        all_boards = []
         boards = Boards.query.all()
         result = []
         for board in boards:
-            result.append({
+            board_dict = {
                 'board_id': board.board_id,
                 'project_id': board.project_id,
                 'board_name': board.board_name,
                 'board_description': board.board_description,
                 'created_at': board.created_at.isoformat(),
+                'files' : []
                 # 'image_url': board.image_url
-            })
+            }
+            find_uploads = db.session.query(Upload_Files).filter(Upload_Files.board_id == board.board_id).all()
+            print(Upload_Files)
+            for file in find_uploads:
+                file_dict = {
+                    "file_id" : file.file_id,
+                    "filename":file.filename,
+                    "file_size":file.file_size,
+                    "file_path":file.file_path
+                }
+                board_dict["files"].append(file_dict)
+            all_boards.append(board_dict)
         return jsonify(result), 200
     except Exception as e:
+        logging.exception("Error fetching boards: %s", str(e))
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
@@ -38,15 +58,26 @@ def get_all_boards():
 def get_board_by_id(board_id):
     try:
         board = Boards.query.get_or_404(board_id)
-        result = {
+        board_dict = {
             'board_id': board.board_id,
             'project_id': board.project_id,
             'board_name': board.board_name,
             'board_description': board.board_description,
             'created_at': board.created_at.isoformat(),
+            'files':[]
             # 'image_url': board.image_url
         }
-        return jsonify(result), 200
+        find_uploads = db.session.query(Upload_Files).filter(Upload_Files.pin_id == board.board_id).all()
+
+        for file in find_uploads:
+            file_dict = {
+                "file_id":file.file_id,
+                "filename":file.filename,
+                "file_path":file.file_path,
+                "file_size":file.file_size
+            }
+            board_dict["files"].append(file_dict)
+        return jsonify(board_dict), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 # --- POST a new board ---
@@ -58,54 +89,91 @@ def add_board():
     if not all(field in data for field in required_fields):
         return jsonify({"error": "project_id and board_name are required"}), 400
         
-    try:
-        # Check if the project exists before adding the board
-        if not Projects.query.get(data['project_id']):
-            return jsonify({"error": "Project not found"}), 404
+    attachments = request.files.getlist("uploads")
 
-        new_board = Boards(
-            project_id=data['project_id'],
-            board_name=data['board_name'],
-            board_description=data.get('board_description'),
-            image_url=data.get('image_url')
-        )
+    new_board = Boards(
+        project_id = data.get('project_id'),
+        board_name = data.get('board_name')
+    )
+
+    try:
         db.session.add(new_board)
+        db.session.flush()
+        upload_board_files(attachments,new_board.board_id)
+
         db.session.commit()
-        return jsonify({'message': 'Board added successfully', 'board_id': new_board.board_id}), 201
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": str(e)}), 500
+        current_app.logger.error(f"Error creating board: {e}")
+        return jsonify({"error": "Failed to create board"}), 500
 
 # --- PUT (update) an existing board ---
 @boards_bp.route('/boards/<string:board_id>', methods=['PUT'])
 def update_board(board_id):
-    data = request.json
     board = Boards.query.get_or_404(board_id)
+    if not board:
+        return jsonify({"error":"Board not found"}),404
     
-    try:
+    is_multipart = request.mimetype and 'multipart/form-data' in request.mimetype
+
+    attachments = []
+    files_to_delete = []
+
+    if is_multipart:
+        data = request.form
+        attachments = request.files.getlist("uploads")
+
+        files_to_delete_json = data.get('files_to_delete' , '[]')
+        try:
+            files_to_delete = json.loads(files_to_delete_json)
+        except Exception as e:
+            return jsonify({"error": "Invalid files_to_delete format"}), 400
+        
         if 'board_name' in data:
             board.board_name = data['board_name']
         if 'board_description' in data:
             board.board_description = data['board_description']
-        if 'image_url' in data:
-            board.image_url = data['image_url']
-            
+    else:
+        data = request.json
+        if 'board_name' in data:
+            board.board_name = data['board_name']
+        if 'board_description' in data:
+            board.board_description = data['board_description']
+
+    try:
+        if attachments or files_to_delete:
+            if attachments or files_to_delete:
+                board.revision_number = (board.revision_number or 0) + 1
+            update_board_files(board.board_id, attachments, files_to_delete)
         db.session.commit()
-        return jsonify({'message': 'Board updated successfully'}), 200
+        return jsonify({"message": "Board updated successfully",
+                        "board_id":board.board_id,
+                        "new_revision":board.revision_number,
+                        "files_added":len(attachments),
+                        "files_deleted":len(files_to_delete)
+                        }), 200
+    
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": str(e)}), 500
-
+        current_app.logger.error(f"Error updating board: {e}")
+        return jsonify({"error": "Failed to update board"}), 500
 # --- DELETE a board ---
 @boards_bp.route('/boards/<string:board_id>', methods=['DELETE'])
 def delete_board(board_id):
     board = Boards.query.get_or_404(board_id)
+    if not board:
+        return jsonify({"error":"Board not found"}),404
     try:
+        uploads = Upload_Files.query.filter_by(board_id = board_id).all()
+        for upload in uploads:
+            db.session.delete(upload)
+        db.session.commit()
         db.session.delete(board)
         db.session.commit()
         return jsonify({'message': 'Board deleted successfully'}), 200
     except Exception as e:
         db.session.rollback()
+        current_app.logger.error(f"Error deleting board: {e}")
         return jsonify({"error": str(e)}), 500
 
 @boards_bp.route('/boards/<string:board_id>', methods=['GET'])

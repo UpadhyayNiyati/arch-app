@@ -4,6 +4,7 @@ from models import db , VendorPayment
 from datetime import datetime
 import uuid
 from decimal import Decimal
+from flask_cors import CORS
 
 # --- Utility Function Placeholder ---
 def generate_uuid():
@@ -11,6 +12,7 @@ def generate_uuid():
     return str(uuid.uuid4())
 
 vendor_payments_bp = Blueprint('VendorPayment' , __name__)
+CORS(vendor_payments_bp)
 
 
     # def to_dict(self):

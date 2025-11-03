@@ -2,11 +2,13 @@ from flask import Blueprint, jsonify, request
 from models import Role, db
 import uuid
 from datetime import datetime
+from flask_cors import CORS
 
 roles_bp = Blueprint('roles', __name__)
+CORS(roles_bp)
 
 # --- GET all roles ---
-@roles_bp.route('/roles', methods=['GET'])
+@roles_bp.route('/get_roles', methods=['GET'])
 def get_all_roles():
     try:
         roles = Role.query.all()
@@ -21,7 +23,7 @@ def get_all_roles():
         return jsonify({"error": str(e)}), 500
 
 # --- GET a single role by ID ---
-@roles_bp.route('/roles/<string:role_id>', methods=['GET'])
+@roles_bp.route('/get_roles/<string:role_id>', methods=['GET'])
 def get_one_role(role_id):
     try:
         role = Role.query.get_or_404(role_id)
@@ -34,7 +36,7 @@ def get_one_role(role_id):
         return jsonify({"error": str(e)}), 500
 
 # --- POST a new role ---
-@roles_bp.route('/roles', methods=['POST'])
+@roles_bp.route('/add_roles', methods=['POST'])
 def add_role():
     data = request.json
     role_name = data.get('role_name')
@@ -52,7 +54,7 @@ def add_role():
         return jsonify({"error": str(e)}), 500
 
 # --- PUT (update) an existing role ---
-@roles_bp.route('/roles/<string:role_id>', methods=['PUT'])
+@roles_bp.route('/update_roles/<string:role_id>', methods=['PUT'])
 def update_role(role_id):
     data = request.json
     role = Role.query.get_or_404(role_id)

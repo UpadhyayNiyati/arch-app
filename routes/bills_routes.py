@@ -5,9 +5,12 @@ from datetime import datetime
 import uuid
 from models import db , Bill
 from decimal import Decimal
+from flask_cors import CORS
 
 # Initialize Flask App and SQLAlchemy (placeholders)
 app = Flask(__name__)
+
+
 # db = SQLAlchemy(app) # Assume db is initialized elsewhere
 
 # --- Utility Function Placeholder ---
@@ -16,6 +19,8 @@ def generate_uuid():
     return str(uuid.uuid4())
 
 bills_bp = Blueprint("Bill" , __name__)
+
+CORS(bills_bp)
 
 
 # --- Placeholder Bill Model (Replace with your actual Bill class if needed) ---

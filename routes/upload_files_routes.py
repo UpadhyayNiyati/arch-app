@@ -9,8 +9,10 @@ from werkzeug.utils import secure_filename
 from api.exception import FileTooLargeError 
 # Assuming models.Upload_Files and models.db are defined elsewhere
 from models import Upload_Files, db
+from flask_cors import CORS
 
 upload_bp = Blueprint("upload_files", __name__)
+CORS(upload_bp)
 
 UPLOAD_FOLDER = "uploads"
 if not os.path.exists(UPLOAD_FOLDER):
@@ -114,7 +116,7 @@ def create_project_templates_folder(project_templates_id):
     """
     folder_path = os.path.join(
         UPLOAD_FOLDER, 
-        "pin_uploads",
+        "project_templates_uploads",
         str(project_templates_id)
     )
     
@@ -136,7 +138,7 @@ def create_template_folder(template_id):
     """
     folder_path = os.path.join(
         UPLOAD_FOLDER, 
-        "pin_uploads",
+        "templates_uploads",
         str(template_id)
     )
     
@@ -149,6 +151,162 @@ def create_template_folder(template_id):
         raise
         
     return folder_path
+
+def update_template_files(files, template_id,  files_to_delete):
+    """Handles deletion of old files and upload of new files for a Pin."""
+    try:
+        folder_path = create_pin_folder(template_id) 
+        
+        # 1. Delete files marked for deletion
+        if files_to_delete:
+            delete_selected_files(files_to_delete)
+        
+        # 2. Upload new files
+        for file in files:
+            if isinstance(file, FileStorage):
+                try:
+                    original_filename = secure_filename(file.filename)
+                    validate_file_size(file)
+                    base, ext = os.path.splitext(original_filename)
+                    unique_filename = f"{base}{ext}"
+                    file_path = os.path.join(folder_path, unique_filename)
+
+                    file.save(file_path)
+
+                    file_id = str(uuid.uuid4())
+                    file_size_kb = os.path.getsize(file_path) / 1024
+
+                    upload_file = Upload_Files(
+                        file_id=file_id,
+                        template_id=template_id,
+                        filename=unique_filename,
+                        file_path=file_path,
+                        file_size=file_size_kb,
+                        # record_time_according_to_timezone=localized_time
+                    )
+                    db.session.add(upload_file)
+
+                except Exception as e:
+                    logging.exception(f"Error updating Pin file {original_filename}: {str(e)}")
+                    db.session.rollback() 
+                    raise e
+        
+        db.session.commit() # Commit all changes for this update operation
+
+    except Exception as e:
+        logging.exception(f"Failed to update template files for ID {template_id}: {str(e)}")
+        db.session.rollback()
+        raise e
+    
+
+    
+def create_board_folder(board_id):
+    """
+    Creates a dedicated upload folder for a specific Template using its ID.
+    Note: The path uses 'pin_uploads' which seems inconsistent with the ID name.
+    Retaining original path logic from prompt.
+    """
+    folder_path = os.path.join(
+        UPLOAD_FOLDER, 
+        "board_uploads",
+        str(board_id)
+    )
+    
+    try:
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path, exist_ok=True)
+        logging.info(f"Directory verified/created for Template: {folder_path}")
+    except Exception as e:
+        logging.error(f"Failed to create directory {folder_path}: {e}")
+        raise
+        
+    return folder_path
+
+def upload_board_files(files, board_id):
+    """Handles the initial upload of multiple files for a Pin."""
+    folder_path = create_pin_folder(board_id)
+    
+    for file in files:
+        if isinstance(file, FileStorage):
+            original_filename = secure_filename(file.filename)
+            try:
+                validate_file_size(file)
+            except ValueError as ve:
+                logging.warning(f"Oversized file upload attempt for Pin: {str(ve)}")
+                raise
+            
+            base, ext = os.path.splitext(original_filename)
+            unique_filename = f"{base}{ext}"
+            file_path = os.path.join(folder_path, unique_filename)
+
+            try:
+                file.save(file_path)
+                file_id = str(uuid.uuid4())
+                file_size_kb = os.path.getsize(file_path) / 1024
+
+                upload_file = Upload_Files(
+                    file_id=file_id,
+                    board_id=board_id, # Use the correct foreign key
+                    filename=unique_filename,
+                    file_path=file_path,
+                    file_size=file_size_kb,
+                    # record_time_according_to_timezone=localized_time
+                    )
+                
+                db.session.add(upload_file)
+                                
+            except Exception as e:
+                logging.exception(f"Error uploading file for Pin {board_id}: {str(e)}")
+                # If you're handling multiple files, you might want to rollback after
+                # the loop or commit after the loop, depending on atomicity requirements.
+                # For consistency with the original `upload_blinding_files`: we raise immediately.
+                raise e
+
+def update_board_files(files, board_id,  files_to_delete):
+    """Handles deletion of old files and upload of new files for a Pin."""
+    try:
+        folder_path = create_pin_folder(board_id) 
+        
+        # 1. Delete files marked for deletion
+        if files_to_delete:
+            delete_selected_files(files_to_delete)
+        
+        # 2. Upload new files
+        for file in files:
+            if isinstance(file, FileStorage):
+                try:
+                    original_filename = secure_filename(file.filename)
+                    validate_file_size(file)
+                    base, ext = os.path.splitext(original_filename)
+                    unique_filename = f"{base}{ext}"
+                    file_path = os.path.join(folder_path, unique_filename)
+
+                    file.save(file_path)
+
+                    file_id = str(uuid.uuid4())
+                    file_size_kb = os.path.getsize(file_path) / 1024
+
+                    upload_file = Upload_Files(
+                        file_id=file_id,
+                        board_id=board_id,
+                        filename=unique_filename,
+                        file_path=file_path,
+                        file_size=file_size_kb,
+                        # record_time_according_to_timezone=localized_time
+                    )
+                    db.session.add(upload_file)
+
+                except Exception as e:
+                    logging.exception(f"Error updating Pin file {original_filename}: {str(e)}")
+                    db.session.rollback() 
+                    raise e
+        
+        db.session.commit() # Commit all changes for this update operation
+
+    except Exception as e:
+        logging.exception(f"Failed to update template files for ID {board_id}: {str(e)}")
+        db.session.rollback()
+        raise e
 
 def create_document_folder(document_id):
     """
@@ -209,6 +367,27 @@ def create_drawing_folder(drawing_id):
         raise
         
     return folder_path
+
+
+# def create_template_folder(template_id):
+#     """
+#     Creates a dedicated upload folder for a specific template using its ID.
+#     """
+#     folder_path = os.path.join(
+#         UPLOAD_FOLDER, 
+#         "drawing_uploads",
+    #     str(template_id)
+    # )
+    
+    # try:
+    #     if not os.path.exists(folder_path):
+    #         os.makedirs(folder_path, exist_ok=True)
+    #     logging.info(f"Directory verified/created for Drawing: {folder_path}")
+    # except Exception as e:
+    #     logging.error(f"Failed to create directory {folder_path}: {e}")
+    #     raise
+        
+    # return folder_path
 
 def create_inspiration_folder(inspiration_id):
     """
@@ -424,7 +603,7 @@ def update_space_files(files, space_id, localized_time, files_to_delete):
 
 # ... Repeat upload/update functions for the other new models (Project Templates, Template, Document, Asset, Drawing, Inspiration)
 
-def upload_project_templates_files(files, project_templates_id, localized_time):
+def upload_project_templates_files(files, project_templates_id):
     """Handles the initial upload of multiple files for Project Templates."""
     folder_path = create_project_templates_folder(project_templates_id)
     
@@ -451,8 +630,8 @@ def upload_project_templates_files(files, project_templates_id, localized_time):
                     project_templates_id=project_templates_id, # Use the correct foreign key
                     filename=unique_filename,
                     file_path=file_path,
-                    file_size=file_size_kb,
-                    record_time_according_to_timezone=localized_time)
+                    file_size=file_size_kb)
+                    # record_time_according_to_timezone=localized_time)
                 
                 db.session.add(upload_file)
                                 
@@ -506,7 +685,7 @@ def update_project_templates_files(files, project_templates_id, localized_time, 
         raise e
 
 
-def upload_template_files(files, template_id, localized_time):
+def upload_template_files(files, template_id):
     """Handles the initial upload of multiple files for a Template."""
     folder_path = create_template_folder(template_id)
     
@@ -533,8 +712,8 @@ def upload_template_files(files, template_id, localized_time):
                     template_id=template_id, # Use the correct foreign key
                     filename=unique_filename,
                     file_path=file_path,
-                    file_size=file_size_kb,
-                    record_time_according_to_timezone=localized_time)
+                    file_size=file_size_kb)
+                    # record_time_according_to_timezone=localized_time)
                 
                 db.session.add(upload_file)
                                 
@@ -835,7 +1014,7 @@ def upload_drawing_files(files, drawing_id):
 #         db.session.rollback()
 #         raise e
 
-def update_drawing_files(files, drawing_id, localized_time, files_to_delete):
+def update_drawing_files(files, drawing_id, files_to_delete):
     """Handles deletion of old files and upload of new files for a Drawing."""
     try:
         # Create folder if it doesn't exist
@@ -878,7 +1057,7 @@ def update_drawing_files(files, drawing_id, localized_time, files_to_delete):
                         file_path=file_path,
                         file_size=file_size_kb,
                         # Use the passed-in localized_time
-                        record_time_according_to_timezone=localized_time 
+                       
                     )
                     db.session.add(upload_file)
 

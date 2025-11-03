@@ -2,8 +2,11 @@ from flask import Blueprint, jsonify, request
 from models import AssetLibrary, User, db
 from datetime import datetime
 import uuid
+from flask_cors import CORS
 
 assets_bp = Blueprint('assets', __name__)
+
+CORS(assets_bp)
 
 # --- GET all assets ---
 @assets_bp.route('/assets', methods=['GET'])

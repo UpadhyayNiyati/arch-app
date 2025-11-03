@@ -2,8 +2,11 @@ from flask import Blueprint, jsonify, request
 from models import Comment, User, Boards, Pin, db
 from datetime import datetime
 import uuid
+from flask_cors import CORS
 
 comments_bp = Blueprint('comments', __name__)
+
+CORS(comments_bp)
 
 # --- GET all comments ---
 @comments_bp.route('/comments', methods=['GET'])

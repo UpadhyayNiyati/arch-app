@@ -2,8 +2,10 @@ from flask import Blueprint , jsonify , request
 from models import ProjectAssignments , db
 import datetime
 import uuid
+from flask_cors import CORS
 
 project_assignments_bp = Blueprint('project_assignments', __name__)
+CORS(project_assignments_bp)
 
 #get all project_assignments
 @project_assignments_bp.route('/project_assignments' , methods = ['GET'])

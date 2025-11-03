@@ -1,8 +1,11 @@
 from flask import Blueprint, jsonify, request
 from models import PinTag, Pin, Tag, db
 import uuid
+from flask_cors import CORS
 
 pin_tags_bp = Blueprint('pin_tags', __name__)
+
+CORS(pin_tags_bp)
 
 # --- POST: Assign a tag to a pin ---
 @pin_tags_bp.route('/pin_tags', methods=['POST'])

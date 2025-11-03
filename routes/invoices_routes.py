@@ -1,12 +1,13 @@
 import uuid
 import logging
 from datetime import datetime, date
-
+from flask_cors import CORS
 from decimal import Decimal, InvalidOperation
 
 from flask import Blueprint, request, jsonify
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from werkzeug.exceptions import NotFound
+
 
 # --- ASSUMED IMPORTS (Adjust based on your project structure) ---
 # Assuming db (SQLAlchemy instance), Invoice model, and generate_uuid are available
@@ -38,6 +39,7 @@ def generate_uuid():
 
 # --- BLUEPRINT INITIALIZATION ---
 invoices_bp = Blueprint('invoices_bp', __name__)
+CORS(invoices_bp)
 logger = logging.getLogger(__name__)
 
 # --- HELPER FUNCTIONS ---
@@ -78,7 +80,7 @@ def invoice_to_dict(invoice):
 # =========================================================================
 # 1. POST (Create New Invoice)
 # =========================================================================
-@invoices_bp.route('/invoices', methods=['POST'])
+@invoices_bp.route('/invoices/add', methods=['POST'])
 def create_invoice():
     data = request.get_json()
     logger.info("Received POST request for new invoice.")

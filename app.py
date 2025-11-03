@@ -6,6 +6,10 @@ from flask_jwt_extended import jwt_required , create_access_token , get_jwt_iden
 from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
+from flask_cors import CORS
+
+
+
 
 # from flask_bcrypt import Bcrypt 
 import os
@@ -17,19 +21,43 @@ app = Flask(__name__)
 # app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # app.config['ALLOWED_EXTENSIONS'] = ALLOWED_EXTENSIONS
 
+CORS(app)
 
-SMTP_SERVER = os.getenv("SMTP_SERVER")
-SMTP_PORT = int(os.getenv("SMTP_PORT"))
-EMAIL_SENDER = os.getenv("EMAIL_SENDER")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+PINTEREST_TOKEN = os.environ.get('PINTEREST_ACCESS_TOKEN')
 
+# --- Configuration (These would be stored securely in config or environment variables) ---
+TOKEN_URL = os.getenv("TOKEN_URI")  # Replace with the real Token Endpoint
+CLIENT_ID = os.getenv("CLIENT_ID")            # Your application's client ID
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")   # Your application's client secret
+REDIRECT_URI = os.getenv("REDIRECT_URI") # Must match the one registered with the server
+# --------------------------------------------------------------------------------------
 
+database_uri = os.getenv('DATABASE_URI')
+if not database_uri:
+    raise RuntimeError("DATABASE_URI not found. Check your .env file!")
 #configure the app
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URI')
+app.config['SQLALCHEMY_DATABASE_URI'] = database_uri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
     'pool_recycle':280
 }
+
+#configure the app
+SMTP_SERVER = os.getenv("SMTP_SERVER")
+SMTP_PORT = int(os.getenv("SMTP_PORT" , "587"))
+EMAIL_SENDER = os.getenv("EMAIL_SENDER")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+# db.init_app(app)
+
+
+SMTP_SERVER = os.getenv("SMTP_SERVER")
+SMTP_PORT = int(os.getenv("SMTP_PORT" , "587"))
+EMAIL_SENDER = os.getenv("EMAIL_SENDER")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+
+# --------------------------------------------------------------------------------------
+# --- Database and JWT Configuration (MUST be set before db.init_app) ---
+
 
 #Add JWT Configuration
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY')
@@ -43,6 +71,7 @@ migrate = Migrate(app, db)
 
 #Register blueprints
 from routes.clients_routes import clients_bp
+from routes.roles_routes import roles_bp
 from routes.user_routes import user_bp
 from routes.documents_routes import documents_bp
 from routes.project_assignments_routes import project_assignments_bp
@@ -62,7 +91,16 @@ from routes.inspiration_routes import inspiration_bp
 from routes.upload_files_routes import upload_bp
 from routes.template_cards_routes import template_cards_bp
 from routes.cards_routes import cards_bp
+from routes.companies_routes import companies_bp
+from routes.super_user_routes import super_user_bp
+from routes.teams_routes import teams_bp
+# from routes.payments_routes import payments_bp
+from routes.invoices_routes import invoices_bp
 
+app.register_blueprint(teams_bp , url_prefix = "/api/teams")
+app.register_blueprint(roles_bp, url_prefix="/api/roles")
+# app.register_blueprint(payments_bp, url_prefix="/api/payments")
+app.register_blueprint(invoices_bp, url_prefix="/api/invoices")
 app.register_blueprint(clients_bp, url_prefix="/api/clients")
 app.register_blueprint(user_bp, url_prefix="/api/user")
 app.register_blueprint(documents_bp, url_prefix="/api/documents")
@@ -83,6 +121,8 @@ app.register_blueprint(inspiration_bp , url_prefix = "/api/inspiration")
 app.register_blueprint(upload_bp , url_prefix = '/api/upload_files')
 app.register_blueprint(template_cards_bp , url_prefix = '/api/template_cards')
 app.register_blueprint(cards_bp , url_prefix = '/api/cards')
+app.register_blueprint(companies_bp , url_prefix = '/api/companies')
+app.register_blueprint(super_user_bp , url_prefix = '/api/super_user')
 
 #create tables
 with app.app_context():

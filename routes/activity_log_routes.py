@@ -1,7 +1,10 @@
 from flask import Blueprint,Flask, jsonify , request
 from models import ActivityLog, db
+from flask_cors import CORS
 
 activity_log_bp = Blueprint('ActivityLog' , __name__)
+
+CORS(activity_log_bp)
 
 @activity_log_bp.route('/activity_logs/<log_id>', methods=['GET'])
 def get_log_by_id(log_id):

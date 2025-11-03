@@ -1,8 +1,10 @@
 # user_roles_bp.py
 from flask import Blueprint, jsonify, request
 from models import User, Role, UserRole, db
+from flask_cors import CORS
 
 user_roles_bp = Blueprint('user_roles', __name__)
+CORS(user_roles_bp)
 
 # --- POST: Assign a role to a user ---
 @user_roles_bp.route('/users/<string:user_id>/roles/<string:role_id>', methods=['POST'])

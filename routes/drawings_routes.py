@@ -4,9 +4,15 @@ import logging
 from .upload_files_routes import upload_drawing_files , update_drawing_files
 from datetime import datetime , timedelta
 import os
+from flask_cors import CORS
+import json
 
 drawings_bp = Blueprint('drawings_bp', __name__)
 
+logger = logging.getLogger(__name__)
+
+
+CORS(drawings_bp)
 # Route to get all drawings
 @drawings_bp.route('/get', methods=['GET'])
 def get_drawings():
@@ -23,6 +29,7 @@ def get_drawings():
                 "space_id": drawing.space_id,
                 "drawing_name": drawing.drawing_name,
                 "revision_number": drawing.revision_number,
+                "description": drawing.description,
                 "uploaded_at": drawing.uploaded_at.isoformat(),
                 "files" : []
             }
@@ -47,72 +54,7 @@ def get_drawings():
         logging.exception(f"Error retrieving drawings: {e}")
         return jsonify({"error": str(e)}), 500
 
-# @drawings_bp.route('/get_by_id', methods=['GET'])
-# def get_drawings_by_id():
-#     """
-#     Retrieves all drawings from the database, with their associated file details.
-#     """
-#     try:
-#         all_drawings = []  # The final list to hold all unique drawing objects
-#         drawings = Drawings.query.all()
-        
-#         for drawing in drawings:
-#             # Create a dictionary for the current drawing
-#             drawing_dict = {
-#                 "drawing_id": drawing.drawing_id,
-#                 "space_id": drawing.space_id,
-#                 "drawing_name": drawing.drawing_name,
-#                 "revision_number": drawing.revision_number,
-#                 "uploaded_at": drawing.uploaded_at.isoformat(),
-#                 "files": []  # Initialize a list to hold the files for THIS drawing
-#             }
-            
-#             # Query for the files associated with the current drawing ID
-#             find_uploads = db.session.query(Upload_Files).filter(Upload_Files.drawing_id == drawing.drawing_id).all()
-            
-#             # Loop through the files found for this drawing
-#             for file in find_uploads:
-#                 file_dict = {
-#                     "file_id": file.file_id,
-#                     "filename": file.filename,
-#                     "file_path": file.file_path,
-#                     "file_size": file.file_size,
-#                     "recorded_at_timezone": file.record_time_according_to_timezone.strftime("%a, %d %b %Y %H:%M:%S %Z") if file.record_time_according_to_timezone else None
-#                 }
-                
-#                 drawing_dict.append({"file":file_dict}) # Append the file to the drawing's file list
-                
-            
-#             # CRITICAL FIX: Append the completed drawing dictionary to the main list
-#             # only after the inner loop is finished.
-#             all_drawings.append(drawing_dict)
-            
-#         return jsonify(all_drawings), 200
-        
-#     except Exception as e:
-#         logging.exception(f"Error retrieving drawings: {e}")
-#         return jsonify({"error": str(e)}), 500
 
-# Route to get a single drawing by ID
-# @drawings_bp.route('get/<string:drawing_id>', methods=['GET'])
-# def get_drawing(drawing_id):
-#     """
-#     Retrieves a single drawing by its drawing_id.
-#     """
-#     drawing = Drawings.query.get(drawing_id)
-#     if drawing:
-#         return jsonify({
-#             "drawing_id": drawing.drawing_id,
-#             "space_id": drawing.space_id,
-#             "drawing_name": drawing.drawing_name,
-#             # "drawing_url": drawing.drawing_url,
-#             "revision_number": drawing.revision_number,
-#             "uploaded_at": drawing.uploaded_at.isoformat(),
-#             'files' : []
-#         }), 200
-    
-
-#     return jsonify({"error": "Drawing not found"}), 404
 @drawings_bp.route('/get/<string:drawing_id>', methods=['GET'])
 def get_drawing_by_id(drawing_id):
     """
@@ -132,6 +74,7 @@ def get_drawing_by_id(drawing_id):
             "space_id": drawing.space_id,
             "drawing_name": drawing.drawing_name,
             "revision_number": drawing.revision_number,
+            "description": drawing.description,
             "uploaded_at": drawing.uploaded_at.isoformat(),
             "files" : []
         }
@@ -161,7 +104,149 @@ def get_drawing_by_id(drawing_id):
             return jsonify({"error": str(e)}), 404
             
         return jsonify({"error": "An unexpected error occurred."}), 500
+    
+@drawings_bp.route('/get/space/<string:space_id>', methods=['GET'])
+def get_drawings_by_space_id(space_id):
+    """
+    Retrieves ALL drawings associated with a specific space_id, with file details.
+    """
+    try:
+        # 1. Retrieve ALL drawings by space_id
+        drawings = Drawings.query.filter_by(space_id=space_id).all()
+        
+        if not drawings:
+            # Return 404 if the space exists but has no drawings
+            return jsonify({"message": f"No drawings found for space ID '{space_id}'"}), 404
 
+        all_drawings_data = []
+        
+        for drawing in drawings:
+            drawing_dict = {
+                "drawing_id": drawing.drawing_id,
+                "space_id": drawing.space_id,
+                "drawing_name": drawing.drawing_name,
+                "revision_number": drawing.revision_number,
+                "description": drawing.description,
+                "uploaded_at": drawing.uploaded_at.isoformat(),
+                "files" : []
+            }
+            
+            # 2. Retrieve and attach associated files for each drawing
+            find_uploads = db.session.query(Upload_Files).filter(Upload_Files.drawing_id == drawing.drawing_id).all()
+            for file in find_uploads:
+                drawing_dict["files"].append({
+                    "file_id": file.file_id,
+                    "filename": file.filename,
+                    "file_path": file.file_path,
+                    "file_size": file.file_size,
+                })
+            
+            all_drawings_data.append(drawing_dict)
+            
+        return jsonify(all_drawings_data), 200
+        
+    except Exception as e:
+        logging.exception(f"Error retrieving drawings by space ID {space_id}: {e}")
+        return jsonify({"error": "An unexpected error occurred."}), 500
+
+
+@drawings_bp.route('/update/<string:space_id>', methods=['PUT'])
+def update_drawing_by_space_id_handler(space_id):
+    """
+    Updates a single drawing's metadata and files, identified by a drawing_id 
+    in the body, constrained by the space_id in the URL.
+    """
+    
+    # --- 1. Data Retrieval ---
+    is_multipart = request.mimetype and 'multipart/form-data' in request.mimetype
+    attachments = []
+    files_to_delete = []
+    data = {}
+    drawing_id = None
+    
+    if is_multipart:
+        data = request.form
+        drawing_id = data.get('drawing_id')
+        attachments = request.files.getlist("uploads")
+        
+        # Parse files to delete
+        files_to_delete_json = data.get('files_to_delete', '[]')
+        try:
+            files_to_delete = json.loads(files_to_delete_json)
+            if not isinstance(files_to_delete, list):
+                raise TypeError()
+        except (json.JSONDecodeError, TypeError):
+            return jsonify({"error": "Invalid format for files_to_delete. Must be a JSON array string."}), 400
+
+    else: # application/json
+        try:
+            data = request.get_json()
+            if data is not None:
+                drawing_id = data.get('drawing_id')
+        except:
+            return jsonify({"error": "Invalid JSON body."}), 400
+    
+    # --- 2. Validation and Query ---
+    if not drawing_id:
+        return jsonify({"error": "A 'drawing_id' is required in the request body to identify the drawing to update."}), 400
+
+    # Log the exact parameters used for the query (for debugging 404s)
+    logger.info(f"Attempting to update Drawing ID: '{drawing_id}' in Space ID: '{space_id}'")
+
+    # 🛑 THE CORE QUERY: Ensures drawing belongs to the space 🛑
+    drawing = Drawings.query.filter_by(drawing_id=drawing_id, space_id=space_id).first()
+    
+    if not drawing:
+        # Returns 404 because the ID pair did not match a record.
+        return jsonify({"error": f"Drawing ID '{drawing_id}' not found in Space ID '{space_id}'"}), 404
+
+    # --- 3. Update Logic ---
+    fields_updated = ('drawing_name' in data or 'description' in data)
+    files_changed = attachments or files_to_delete
+    
+    # Apply metadata changes
+    if 'drawing_name' in data:
+        drawing.drawing_name = data['drawing_name']
+        
+    if 'description' in data:
+        drawing.description = data['description']
+
+    try:
+        # Check if no changes were requested at all
+        if not fields_updated and not files_changed:
+            return jsonify({"message": "No metadata or files provided for update."}), 200
+
+        # Handle File/Revision Updates if a file action occurred
+        if files_changed:
+            # Increment revision number
+            drawing.revision_number = (drawing.revision_number or 0) + 1
+            
+            # Call your file utility function
+            update_drawing_files(attachments, drawing.drawing_id, files_to_delete)
+        
+        # Commit all changes 
+        db.session.commit()
+        
+        # --- 4. Success Response ---
+        message = "Drawing updated successfully"
+        if fields_updated and files_changed:
+             message = "Drawing metadata and files updated successfully"
+        elif files_changed:
+             message = "Drawing files updated successfully (no metadata changed)"
+        
+        return jsonify({
+            "message": message,
+            "drawing_id": drawing.drawing_id,
+            "new_revision": drawing.revision_number,
+            "files_added": len(attachments),
+            "files_deleted": len(files_to_delete)
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error updating drawing/files for ID {drawing_id} in space {space_id}: {e}", exc_info=True)
+        return jsonify({"error": "Failed to update drawing or files"}), 500
+    
 # Route to create a new drawing
 @drawings_bp.route('/post', methods=['POST'])
 def create_drawing():
@@ -170,7 +255,13 @@ def create_drawing():
     """
     data = request.form
     
-    if not data or 'space_id' not in data or 'drawing_name' not  in data:
+    # if not data or 'space_id' not in data or 'drawing_name' or 'description' not  in data:
+        # return jsonify({"error": "Missing required fields"}), 400
+
+    required_fields = ['space_id', 'drawing_name', 'description']
+    
+    # Check if any required field is NOT present in data
+    if any(field not in data for field in required_fields):
         return jsonify({"error": "Missing required fields"}), 400
     
     # if file and allowed_file(file.filename):
@@ -182,6 +273,7 @@ def create_drawing():
     new_drawing = Drawings(
         space_id=data.get('space_id'),
         drawing_name=data.get('drawing_name'),
+        description = data.get('description ')
         
     )
     
@@ -201,222 +293,171 @@ def create_drawing():
         current_app.logger.error(f"Error creating drawing: {e}")
         return jsonify({"error": "Failed to create drawing"}), 500
 
-# Route to update an existing drawing
-# @drawings_bp.route('/api/drawings/<string:drawing_id>', methods=['PUT'])
-# def update_drawing(drawing_id):
-#     """
-#     Updates the drawing_url and increments the revision_number for a drawing.
-#     """
-#     drawing = Drawings.query.get(drawing_id)
-#     if not drawing:
-#         return jsonify({"error": "Drawing not found"}), 404
-    
-#     data = request.get_json()
-#     if not data or 'drawing_url' not in data:
-#         return jsonify({"error": "Missing required 'drawing_url' field"}), 400
-
-#     try:
-#         # Update the drawing_url and increment revision_number
-#         drawing.drawing_url = data['drawing_url']
-#         drawing.revision_number += 1
-#         db.session.commit()
-#         return jsonify({
-#             "message": "Drawing updated successfully",
-#             "drawing_id": drawing.drawing_id,
-#             "new_revision": drawing.revision_number
-#         }), 200
-#     except Exception as e:
-#         db.session.rollback()
-#         current_app.logger.error(f"Error updating drawing: {e}")
-#         return jsonify({"error": "Failed to update drawing"}), 500
-
-# Route to update an existing drawing AND its associated files
-from flask import jsonify, request, current_app
-from datetime import datetime
-import json
-# Assuming 'db' is your SQLAlchemy object and 'Drawings' is your model
-# from . import db # Adjust import based on your app structure
-# from .models import Drawings # Adjust import based on your app structure
-# Assuming update_drawing_files is defined elsewhere
-
-# @drawings_bp.route('/update/<string:drawing_id>', methods=['PUT'])
-# def update_drawing(drawing_id):
-#     """
-#     Updates a drawing's metadata and optionally updates its associated files.
-#     The request can be multipart/form-data for file uploads or application/json for metadata updates.
-#     """
-#     drawing = Drawings.query.get(drawing_id)
-#     if not drawing:
-#         return jsonify({"error": "Drawing not found"}), 404
-
-#     # Determine if it's a file update (multipart/form-data) or a metadata update (application/json)
-#     is_multipart = request.mimetype and 'multipart/form-data' in request.mimetype
-    
-#     attachments = []
-#     files_to_delete = []
-    
-#     if is_multipart:
-#         data = request.form
-#         attachments = request.files.getlist("uploads")
-        
-#         # files_to_delete should be a JSON array in the form data
-#         files_to_delete_json = data.get('files_to_delete', '[]')
-#         try:
-#             # Safely parse the JSON array of file IDs to delete
-#             files_to_delete = json.loads(files_to_delete_json)
-#         except json.JSONDecodeError:
-#             return jsonify({"error": "Invalid format for files_to_delete"}), 400
-
-#         # Optional: Update drawing metadata from form data if provided
-#         if 'drawing_name' in data:
-#             drawing.drawing_name = data['drawing_name']
-
-#     else: # application/json for metadata updates only
-#         data = request.get_json()
-        
-#         # In a JSON-only update, we only check for drawing_name metadata
-#         if data and 'drawing_name' in data:
-#             drawing.drawing_name = data['drawing_name']
-            
-#         # JSON requests are not expected to contain files for upload/delete
-#         # If you need to handle file deletions via JSON, you'd add that logic here, 
-#         # but files_to_delete must be initialized correctly.
-
-#     try:
-#         # --- Metadata Update (handled above based on request type) ---
-
-#         # 1. Handle File Updates (Delete old, Upload new)
-#         # This block now handles file changes from the multipart request.
-#         if attachments or files_to_delete:
-            
-#             # If files are added or deleted, it usually signifies a new revision of the main drawing.
-#             # We move the revision increment here, as it's directly tied to a file change.
-#             if attachments or files_to_delete:
-#                  drawing.revision_number = (drawing.revision_number or 0) + 1
-            
-#             # Assuming a simple UTC time for the file record update.
-#             # localized_time = datetime.utcnow() 
-#             update_drawing_files(attachments, drawing_id, files_to_delete)
-        
-#         # 2. Commit Drawing Metadata and File record changes
-#         db.session.commit()
-        
-#         return jsonify({
-#             "message": "Drawing updated successfully",
-#             "drawing_id": drawing.drawing_id,
-#             "new_revision": drawing.revision_number,
-#             "files_added": len(attachments),
-#             "files_deleted": len(files_to_delete)
-#         }), 200
-        
-#     except Exception as e:
-#         db.session.rollback()
-#         current_app.logger.error(f"Error updating drawing/files: {e}")
-#         return jsonify({"error": "Failed to update drawing or files"}), 500
-
-
     
 # Route to delete a drawing
-# @drawings_bp.route('/delete/<string:drawing_id>', methods=['DELETE'])
-# def delete_drawing(drawing_id):
-#     """
-#     Deletes a drawing record from the database.
-#     """
-#     drawing = Drawings.query.get(drawing_id)
-#     if not drawing:
-#         return jsonify({"error": "Drawing not found"}), 404
+@drawings_bp.route('/delete/<string:drawing_id>', methods=['DELETE'])
+def delete_drawing(drawing_id):
+    """
+    Deletes a drawing record from the database.
+    """
+    drawing = Drawings.query.get(drawing_id)
+    if not drawing:
+        return jsonify({"error": "Drawing not found"}), 404
     
-#     try:
-#         db.session.delete(drawing)
-#         db.session.commit()
-#         return jsonify({"message": "Drawing deleted successfully"}), 200
-#     except Exception as e:
-#         db.session.rollback()
-#         current_app.logger.error(f"Error deleting drawing: {e}")
-#         return jsonify({"error": "Failed to delete drawing"}), 500
+    try:
+        uploads = Upload_Files.query.filter_by(drawing_id=drawing_id).all()
+        for upload in uploads:
+            db.session.delete(upload)
+        db.session.commit()
+        db.session.delete(drawing)
+        db.session.commit()
+        return jsonify({"message": "Drawing deleted successfully"}), 200
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error deleting drawing: {e}")
+        return jsonify({"error": "Failed to delete drawing"}), 500
     
 
-
-
-# @drawings_bp.route('/delete/<string:drawing_id>', methods=['DELETE'])
-# def delete_drawing(drawing_id):
-#     drawing = Drawings.query.get(drawing_id)
-#     if not drawing:
-#         return jsonify({"error": "Drawing not found"}), 404
+@drawings_bp.route('/update/<string:space_id>', methods=['PUT'])
+def update_drawing_by_space_id(space_id):
+    """
+    Updates a single drawing's metadata and files, identified by a drawing_id 
+    in the body, constrained by the space_id in the URL.
+    """
     
-#     try:
-#         # 1. FIND ALL CHILD RECORDS
-#         files_to_delete = Upload_Files.query.filter_by(drawing_id=drawing_id).all()
-        
-#         for file_record in files_to_delete:
-#             # 2. DELETE PHYSICAL FILE (IMPORTANT: Implement/import this helper)
-#             # You need a function like this for disk cleanup
-#             # delete_physical_file_by_path(file_record.file_path)
-            
-#             # 3. DELETE CHILD RECORD FROM DB
-#             db.session.delete(file_record)
-            
-#         # 4. DELETE PARENT RECORD ONLY AFTER ALL CHILDREN ARE GONE
-#         db.session.delete(drawing)
-        
-#         # 5. COMMIT THE TRANSACTION
-#         db.session.commit()
-        
-#         return jsonify({"message": "Drawing and associated files deleted successfully"}), 200
-        
-#     except Exception as e:
-#         # Rollback ensures no partial deletions occur if any step fails
-#         db.session.rollback()
-#         current_app.logger.error(f"Error deleting drawing and files for ID {drawing_id}: {e}")
-#         return jsonify({"error": "Failed to delete drawing and associated files"}), 500
-
-# @drawings_bp.route('/delete/<string:drawing_id>', methods=['DELETE'])
-# def delete_drawing(drawing_id):
-#     # ... (Drawing not found check remains the same) ...
-#     drawing = Drawings.query.get(drawing_id)
-#     if not drawing:
-#         return jsonify({"error": "Drawing not found"}), 404
-        
-#     deleted_files_count = 0
+    # --- 1. Data Retrieval ---
+    is_multipart = request.mimetype and 'multipart/form-data' in request.mimetype
+    attachments = []
+    files_to_delete = []
+    data = {}
+    drawing_id = None
     
-#     try:
-#         # 1. DELETE RECORDS FROM ALL DIRECT CHILD TABLES (including upload_files)
+    # ... (Data retrieval logic remains the same) ...
+    if is_multipart:
+        data = request.form
+        drawing_id = data.get('drawing_id')
+        attachments = request.files.getlist("uploads")
         
-#         # --- A. Delete from Upload_Files (Your existing logic) ---
-#         files_to_delete = Upload_Files.query.filter_by(drawing_id=drawing_id).all()
-#         for file_record in files_to_delete:
-#             # Delete physical file
-#             try:
-#                 if os.path.exists(file_record.file_path):
-#                     os.remove(file_record.file_path)
-#             except OSError as e:
-#                 current_app.logger.warning(f"Warning: Could not delete physical file {file_record.file_path}: {e}")
-            
-#             # Delete DB record
-#             db.session.delete(file_record)
-#             deleted_files_count += 1
-            
-#         # --- B. DELETE RECORDS FROM THIRD CHILD TABLE (e.g., Drawing_Revisions) ---
-#         # ⚠️ This is the likely missing step causing your error ⚠️
-        
-#         # Hypothetical model: Drawing_Revisions
-#         revisions_to_delete = Drawing_Revisions.query.filter_by(drawing_id=drawing_id).all()
-#         for revision in revisions_to_delete:
-#              db.session.delete(revision)
-#              current_app.logger.info(f"Deleted related revision record: {revision.id}")
+        # Parse files to delete
+        files_to_delete_json = data.get('files_to_delete', '[]')
+        try:
+            files_to_delete = json.loads(files_to_delete_json)
+            if not isinstance(files_to_delete, list):
+                raise TypeError()
+        except (json.JSONDecodeError, TypeError):
+            return jsonify({"error": "Invalid format for files_to_delete. Must be a JSON array string."}), 400
 
-#         # 2. DELETE PARENT DRAWING RECORD 
-#         db.session.delete(drawing)
+    else: # application/json
+        try:
+            data = request.get_json()
+            if data is not None:
+                drawing_id = data.get('drawing_id')
+        except:
+            return jsonify({"error": "Invalid JSON body."}), 400
+    
+    # --- 2. Validation and Query ---
+    if not drawing_id:
+        return jsonify({"error": "A 'drawing_id' is required in the request body to identify the drawing to update."}), 400
+
+    # 🚨 DEBUG LINE: Log the exact parameters used for the query
+    logger.info(f"Attempting to update Drawing ID: '{drawing_id}' in Space ID: '{space_id}'")
+
+    # 🛑 THE QUERY WHERE THE ERROR OCCURS 🛑
+    drawing = Drawings.query.filter_by(drawing_id=drawing_id, space_id=space_id).first()
+    
+    if not drawing:
+        # Returns 404 because the ID pair did not match a record.
+        return jsonify({"error": f"Drawing ID '{drawing_id}' not found in Space ID '{space_id}'"}), 404
+
+    # --- 3. Update Logic ---
+    fields_updated = ('drawing_name' in data or 'description' in data)
+    files_changed = attachments or files_to_delete
+    
+    # Apply metadata changes
+    if 'drawing_name' in data:
+        drawing.drawing_name = data['drawing_name']
         
-#         # 3. COMMIT THE TRANSACTION
-#         db.session.commit()
+    if 'description' in data:
+        drawing.description = data['description']
+
+    try:
+        # Check if no changes were requested at all
+        if not fields_updated and not files_changed:
+            return jsonify({"message": "No metadata or files provided for update."}), 200
+
+        # Handle File/Revision Updates if a file action occurred
+        if files_changed:
+            # Increment revision number
+            drawing.revision_number = (drawing.revision_number or 0) + 1
+            
+            # Call your file utility function
+            update_drawing_files(attachments, drawing.drawing_id, files_to_delete)
         
-#         return jsonify({
-#             "message": "Drawing and associated data deleted successfully",
-#             "files_deleted": deleted_files_count
-#         }), 200
+        # Commit all changes 
+        db.session.commit()
         
-#     except Exception as e:
-#         db.session.rollback()
-#         current_app.logger.error(f"Error deleting drawing and files for ID {drawing_id}: {e}")
-#         return jsonify({"error": "Failed to delete drawing and associated files"}), 500
+        # --- 4. Success Response ---
+        message = "Drawing updated successfully"
+        if fields_updated and files_changed:
+             message = "Drawing metadata and files updated successfully"
+        elif files_changed:
+             message = "Drawing files updated successfully (no metadata changed)"
+        
+        return jsonify({
+            "message": message,
+            "drawing_id": drawing.drawing_id,
+            "new_revision": drawing.revision_number,
+            "files_added": len(attachments),
+            "files_deleted": len(files_to_delete)
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error updating drawing/files for ID {drawing_id} in space {space_id}: {e}", exc_info=True)
+        return jsonify({"error": "Failed to update drawing or files"}), 500
+
+@drawings_bp.route('/delete/space/<string:space_id>', methods=['DELETE'])    
+def delete_drawing_by_space_id(space_id):
+    """
+    Deletes a specific drawing record and its associated file records.
+    Identifies the drawing by 'drawing_id' provided in the form-data body,
+    constrained by 'space_id' in the URL path.
+    """
+    try:
+        # 🚨 KEY CHANGE: Use request.form to retrieve data sent as form-data
+        data = request.form
+        drawing_id = data.get('drawing_id')
+    except Exception:
+        # This generic except block is kept, though request.form is less prone to parsing errors than get_json()
+        return jsonify({"error": "Invalid or missing form data."}), 400
+
+    if not drawing_id:
+        return jsonify({"error": "A 'drawing_id' is required in the body to identify the drawing to delete."}), 400
+
+    try:
+        # 1. Find the drawing using both drawing_id and space_id
+        drawing = Drawings.query.filter_by(drawing_id=drawing_id, space_id=space_id).first()
+        
+        if not drawing:
+            # Returns 404 if drawing is not found OR if it doesn't belong to the space
+            return jsonify({"error": f"Drawing ID '{drawing_id}' not found in Space ID '{space_id}'"}), 404
+        
+        # 2. Delete associated file records (Upload_Files)
+        uploads = Upload_Files.query.filter_by(drawing_id=drawing_id).all()
+        for upload in uploads:
+            # NOTE: Include physical file deletion logic here if necessary
+            db.session.delete(upload)
+            db.session.commit()
+            
+        # 3. Delete the main Drawing record
+        db.session.delete(drawing)
+        
+        # 4. Commit all deletions (files and drawing) in one transaction
+        db.session.commit()
+        
+        return jsonify({"message": f"Drawing ID {drawing_id} successfully deleted from space {space_id}"}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error deleting drawing {drawing_id} in space {space_id}: {e}")
+        return jsonify({"error": "Failed to delete drawing"}), 500

@@ -1,7 +1,11 @@
 from flask import Blueprint , jsonify , request
 from models import  ProjectTemplates, db
+import datetime
+import uuid
+from flask_cors import CORS
 
 project_templates_bp = Blueprint('project_templates' , __name__)
+CORS(project_templates_bp)
 
 #get all project_templates
 @project_templates_bp.route('/get_all_project_templates' , methods = ['GET'])

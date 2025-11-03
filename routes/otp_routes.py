@@ -8,8 +8,10 @@ import os
 from email.message import EmailMessage
 import smtplib
 import uuid
+from flask_cors import CORS
 
 otp_bp = Blueprint('otp', __name__)
+CORS(otp_bp)
 bcrypt = Bcrypt()
 
 # Helper function to send email

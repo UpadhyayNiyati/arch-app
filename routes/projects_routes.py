@@ -1,76 +1,88 @@
 from flask import Blueprint , jsonify , request
-from models import  Projects, db
+from models import  Projects, db , Clients , Spaces , Tasks
 import datetime
 import uuid
 from datetime import datetime, date # Import date for correct data type
+from flask_cors import CORS
 
 
 projects_bp = Blueprint('projects', __name__)
+CORS(projects_bp)
 
 # --- GET all projects ---
 @projects_bp.route('/projects', methods=['GET'])
 def get_all_projects():
     try:
+        # Fetch all projects from the database
+        projects = Projects.query.all()
         
-        # projects = Projects.query.all()
-        # result = []
-        # for project in projects:
-        #     result.append({
-        #         'project_id': project.project_id,
-        #         'project_name': project.project_name,
-        #         'project_description': project.project_description,
-        #         'start_date': project.start_date.isoformat() if project.start_date else None,
-        #         'end_date': project.end_date.isoformat() if project.end_date else None,
-        #         'status': project.status,
-        #         'budget': project.budget,
-        #         'created_at': project.created_at.isoformat() if project.created_at else None,
-        #         'client_id': project.client_id
-        #     })
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 10, type=int)
-
-        # Use SQLAlchemy's paginate() method to get a paginated result
-        paginated_projects = Projects.query.paginate(page=page, per_page=per_page, error_out=False)
-
         result = []
-        for project in paginated_projects.items:
+        for project in projects:
             result.append({
                 'project_id': project.project_id,
                 'project_name': project.project_name,
+                'client_name': project.client.client_name if project.client else None,  # Fetch related client's name
                 'project_description': project.project_description,
                 'start_date': project.start_date.isoformat() if project.start_date else None,
+                # 'site_area': project.site_area,
+                'location': project.location,
                 'due_date': project.due_date.isoformat() if project.due_date else None,
-                'status': project.status,
-                'budget': project.budget,
-                'created_at': project.created_at.isoformat() if project.created_at else None,
-                'client_id': project.client_id
+                'status': project.status or 'Not Started',
+                'updated_at': project.updated_at.isoformat() if project.updated_at else None
+                # 'budget': project.budget,
+                # 'created_at': project.created_at.isoformat() if project.created_at else None
             })
+
+        # Return the full list of projects (no IDs)
         return jsonify({
             'projects': result,
-            'total_projects': paginated_projects.total,
-            'current_page': paginated_projects.page,
-            'pages': paginated_projects.pages
+            'total_projects': len(result)
         }), 200
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
+def _serilalize_datetime(dt):
+    if isinstance(dt ,(datetime , date)):
+        return dt.isoformat()
+    return None
+
 # --- GET single project by id ---
 @projects_bp.route('/projects/<string:project_id>', methods=['GET'])
 def get_project_by_id(project_id):
     try:
+        # Fetch the project by ID (404 if not found)
         project = Projects.query.get_or_404(project_id)
+
+        spaces_count = Spaces.query.filter_by(project_id=project_id).count()
+
+        tasks_performed_count = Tasks.query.filter_by(
+            project_id=project_id,
+            # is_completed=True 
+           ).count()
+
+        total_actions = tasks_performed_count + spaces_count
+
+        # Prepare the response (exclude IDs)
         result = {
             'project_id': project.project_id,
             'project_name': project.project_name,
+            'client_name': project.client.client_name if project.client else None,
             'project_description': project.project_description,
-            'start_date': project.start_date.isoformat() if project.start_date else None,
+            # 'start_date': project.start_date.isoformat() if project.start_date else None,
+            # 'site_area': project.site_area,
+            'location': project.location,
             'due_date': project.due_date.isoformat() if project.due_date else None,
-            'status': project.status,
+            'status': project.status or 'Not Started',
             'budget': project.budget,
-            'created_at': project.created_at.isoformat() if project.created_at else None,
-            'client_id': project.client_id
+            'updated_at': project.updated_at.isoformat() if project.updated_at else None,
+            'total_actions_count': total_actions
         }
+            # 'created_at': project.created_at.isoformat() if project.created_at else None
+        
+
         return jsonify(result), 200
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -79,24 +91,39 @@ def get_project_by_id(project_id):
 def add_projects():
     data = request.json
     # The required_fields list has been updated to include 'client_id'
-    required_fields = ['project_name', 'site_area', 'location', 'budget', 'start_date', 'due_date', 'status', 'project_description', 'client_id']
+    required_fields = ['project_name' ,'location', 'due_date', 'status', 'project_description', 'client_name']
     
     # 1. Check if all required fields are present
     if not all(field in data for field in required_fields):
         return jsonify({'error': 'All fields are required'}), 400
     
     try:
+
+        client_name = data['client_name']
+
+        # 1. Verify that the client exists
+        client = Clients.query.filter_by(client_name=client_name).first()
+
+        if client is None:
+            new_client = Clients(client_name = client_name)
+            db.session.add(new_client)
+            db.session.commit()
+            client_id = new_client.client_id
+        else:
+            client_id = client.client_id
+
         # 2. Instantiate the Projects model with proper date conversion
         new_project = Projects(
             project_name=data['project_name'],
-            site_area=data['site_area'],
+            # site_area=data['site_area'],
             location=data['location'],
-            budget=data['budget'],
-            start_date=datetime.strptime(data['start_date'], '%Y-%m-%d').date(),
+            # budget=data['budget'],
+            # start_date=datetime.strptime(data['start_date'], '%Y-%m-%d').date(),
             due_date=datetime.strptime(data['due_date'], '%Y-%m-%d').date(),
             status=data['status'],
             project_description=data['project_description'],
-            client_id=data['client_id']
+            # client_name=data['client_name']
+            client_id = client_id
         )
         
         # 3. Add and commit the new project to the database
@@ -177,4 +204,3 @@ def update_project_client(project_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
-        

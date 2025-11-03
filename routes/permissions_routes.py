@@ -2,8 +2,11 @@ from flask import Blueprint, jsonify, request
 from models import Permission, db
 import uuid
 import datetime
+from flask_cors import CORS
 
 permissions_bp = Blueprint('permissions', __name__)
+
+CORS(permissions_bp)
 
 # --- GET all permissions ---
 @permissions_bp.route('/permissions', methods=['GET'])

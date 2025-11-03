@@ -5,6 +5,7 @@ from datetime import datetime
 import uuid
 from decimal import Decimal
 import logging
+from flask_cors import CORS
 
 # Initialize Flask App and SQLAlchemy (placeholders)
 app = Flask(__name__)
@@ -12,6 +13,7 @@ app = Flask(__name__)
 # db = SQLAlchemy(app)
 
 payments_bp = Blueprint('Payment' , __name__)
+CORS(payments_bp)
 
 # --- Utility Function Placeholder ---
 def generate_uuid():

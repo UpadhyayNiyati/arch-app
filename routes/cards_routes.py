@@ -1,9 +1,10 @@
 from flask import Flask, request, jsonify , Blueprint
 from flask_sqlalchemy import SQLAlchemy
-from models import db , Cards
+from models import db , Cards , Clients
 from datetime import datetime
 import uuid
 from decimal import Decimal
+from flask_cors import CORS
 
 # --- Utility Function Placeholder ---
 def generate_uuid():
@@ -11,26 +12,44 @@ def generate_uuid():
 
 cards_bp = Blueprint('Cards' , __name__)
 
+CORS(cards_bp)
+
 @cards_bp.route('/post', methods=['POST'])
 def create_card():
     data = request.json
 
     # Basic input validation for required fields
-    if not all(k in data for k in ('card_name', 'card_type', 'status')):
+    if not all(k in data for k in ('card_name', 'description', 'status' , 'client_name' , 'due_date' , 'location' , 'cardscount')):
         return jsonify({"message": "Missing required fields (card_name, card_type, status)"}), 400
 
     try:
+        client_name = data['client_name']
+
+        client = Clients.query.filter_by(client_name=client_name).first()
+        if client is None:
+            new_client = Clients(client_name = client_name)
+            db.session.add(new_client)
+            db.session.commit()
+            client_id = new_client.client_id
+        else:
+            client_id = client.client_id
+
         new_card = Cards(
             card_name=data['card_name'],
-            card_type=data['card_type'],
+            # card_type=data['card_type'],
             status=data['status'],
             description=data.get('description'),
-            created_at=datetime.fromisoformat(data['created_at']) if 'created_at' in data else None
+            due_date=datetime.strptime(data['due_date'], '%Y-%m-%d').date() if 'due_date' in data else None,
+            location=data.get('location'),
+            cardscount=int(data['cardscount']) if 'cardscount' in data else None,
+            client_id = client_id
+
+            # created_at=datetime.fromisoformat(data['created_at']) if 'created_at' in data else None
         )
 
         db.session.add(new_card)
         db.session.commit()
-        return jsonify(new_card.to_dict()), 201 # 201 Created
+        return jsonify({'message':'card added successfully'}), 201 # 201 Created
 
     except Exception as e:
         db.session.rollback()

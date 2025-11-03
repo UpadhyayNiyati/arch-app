@@ -1,6 +1,6 @@
 from flask import Blueprint , jsonify , request
-from models import Vendors , db , User , OtpCode
-from flask_jwt_extended import create_access_token , get_jwt_identity , jwt_required
+from models import Vendors , db , User , OtpCode , Vendors
+from flask_jwt_extended import create_access_token , get_jwt_identity , jwt_required 
 from datetime import datetime , timezone , timedelta
 from werkzeug.security import generate_password_hash , check_password_hash
 import random
@@ -9,8 +9,11 @@ import uuid
 from email.message import EmailMessage
 import os
 import smtplib
+from flask_cors import CORS
+import logging
 
 vendors_bp = Blueprint('vendors', __name__)
+CORS(vendors_bp)
 
 def send_email(recipients, subject, body):
     msg = EmailMessage()
@@ -28,7 +31,7 @@ def send_email(recipients, subject, body):
 @vendors_bp.route('/vendors', methods=['POST'])
 def create_vendor():
     data = request.json
-    required_fields = ['company_name' , 'contact_person' ,'vendor_email' , 'trade']
+    required_fields = ['company_name' , 'contact_person' ,'vendor_email' , 'trade', 'contact_number']
     
     # 1. Check if all required fields are present outside the loop
     if not all(field in data for field in required_fields):
@@ -40,7 +43,8 @@ def create_vendor():
             company_name=data['company_name'],
             contact_person=data['contact_person'],
             vendor_email=data['vendor_email'],
-            trade=data['trade']
+            trade=data['trade'],
+            contact_number = data['contact_number']
         )
         
         # 3. Add and commit the new vendor to the database
@@ -79,7 +83,8 @@ def get_all_vendors():
                 'company_name': vendor.company_name,
                 'contact_person': vendor.contact_person,
                 'vendor_email': vendor.vendor_email,
-                'trade': vendor.trade
+                'trade': vendor.trade,
+                'contact_number':vendor.contact_number
             })
 
         return jsonify({
@@ -104,9 +109,44 @@ def get_vendor_by_id(vendor_id):
         'company_name': vendor.company_name,
         'contact_person': vendor.contact_person,
         'vendor_email': vendor.vendor_email,
-        'trade': vendor.trade
+        'trade': vendor.trade,
+        'contact_number':vendor.contact_number
     }
     return jsonify(result) , 200
+
+@vendors_bp.route('/vendors/space/<string:space_id>', methods=['GET'])
+def get_vendors_by_space_id(space_id):
+    """
+    Retrieves all vendors associated with a specific space_id.
+    """
+    try:
+        # 1. Query the Vendors table using the space_id
+        vendors = Vendors.query.filter_by(space_id=space_id).all()
+        
+        if not vendors:
+            # Return a 404 if no vendors are found for that space_id
+            return jsonify({"message": f"No vendors found for space ID '{space_id}'"}), 404
+
+        all_vendors_data = []
+        for vendor in vendors:
+            vendor_dict = {
+                'vendor_id': vendor.vendor_id,
+                'space_id': vendor.space_id,  # Assuming this field exists
+                # 'vendor_name': vendor.vendor_name,  # Adjust fields based on your actual model
+                'contact_person': vendor.contact_person,
+                'contact_number': vendor.contact_number,
+                'vendor_email': vendor.vendor_email,
+                'company_name': vendor.company_name,
+                'trade': vendor.trade,
+                # Add other vendor fields here
+            }
+            all_vendors_data.append(vendor_dict)
+
+        return jsonify(all_vendors_data), 200
+
+    except Exception as e:
+        # logger.error(f"Error retrieving vendors for space ID {space_id}: {e}", exc_info=True)
+        return jsonify({"error": "An unexpected server error occurred."}), 500
 
 #update vendor by id
 @vendors_bp.route('/vendors/<string:vendor_id>', methods=['PUT'])
@@ -123,8 +163,57 @@ def update_vendor(vendor_id):
         vendor.vendor_email = data['vendor_email']
     if 'trade' in data:
         vendor.trade = data['trade']
+    if 'contact_number' in data:
+        vendor.contact_number = data['contact_number']
     db.session.commit()
     return jsonify({'message': 'Vendor updated successfully'}), 200
+
+@vendors_bp.route('/vendors/space/<string:space_id>', methods=['PUT'])
+def update_vendor_by_space_id(space_id):
+    """
+    Updates a single vendor that belongs to the given space_id.
+    Requires 'vendor_id' in the JSON body to identify which vendor to update.
+    """
+    data = request.get_json()
+    vendor_id = data.get('vendor_id')
+
+    if not vendor_id:
+        return jsonify({"error": "vendor_id is required in the body to identify the vendor to update."}), 400
+
+    try:
+        # 1. Find the vendor by vendor_id AND space_id for security and correctness
+        vendor = Vendors.query.filter_by(vendor_id=vendor_id, space_id=space_id).first_or_404(
+            description=f"Vendor ID '{vendor_id}' not found in space ID '{space_id}'"
+        )
+
+        # 2. Update fields
+        if 'copmany_name' in data:
+            vendor.company_name = data['company_name']
+        if 'contact_person' in data:
+            vendor.contact_person = data['contact_person']
+        if 'contact_number' in data:
+            vendor.contact_number = data['contact_number']
+        if 'vendor_email' in data:
+            vendor.vendor_email = data['vendor_email']
+        if 'trade' in data:
+            vendor.trade = data['trade']
+        # Add logic for other fields here...
+        
+        # Prevent updating the space_id via PUT if it's meant to be immutable
+        # if 'space_id' in data: 
+        #    vendor.space_id = data['space_id'] 
+
+        # 3. Commit changes
+        db.session.commit()
+        return jsonify({'message': f'Vendor ID {vendor_id} in space {space_id} updated successfully'}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 404
+
+    except Exception as e:
+        db.session.rollback()
+        # logger.error(f"Error updating vendor ID {vendor_id} in space {space_id}: {e}", exc_info=True)
+        return jsonify({"error": "An unexpected server error occurred."}), 500
 
 #delete vendor by id
 @vendors_bp.route('/del_vendors/<string:vendor_id>' , methods = ['DELETE'])
@@ -135,6 +224,38 @@ def delete_vendor(vendor_id):
     db.session.delete(vendor)
     db.session.commit()
     return jsonify({"message" : "Vendor deleted successfully!!"})
+
+@vendors_bp.route('/vendors/space/<string:space_id>', methods=['DELETE'])
+def delete_vendor_by_space_id(space_id):
+    """
+    Deletes a single vendor that belongs to the given space_id.
+    Requires 'vendor_id' in the JSON body to identify which vendor to delete.
+    """
+    data = request.get_json()
+    vendor_id = data.get('vendor_id')
+
+    if not vendor_id:
+        return jsonify({"error": "vendor_id is required in the body to identify the vendor to delete."}), 400
+
+    try:
+        # 1. Find the vendor by vendor_id AND space_id for security and correctness
+        vendor = Vendors.query.filter_by(vendor_id=vendor_id, space_id=space_id).first_or_404(
+            description=f"Vendor ID '{vendor_id}' not found in space ID '{space_id}'"
+        )
+
+        # 2. Delete the vendor
+        db.session.delete(vendor)
+        db.session.commit()
+        
+        return jsonify({"message": f"Vendor ID {vendor_id} successfully deleted from space {space_id}"}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 404
+
+    except Exception as e:
+        db.session.rollback()
+        # logger.error(f"Error deleting vendor ID {vendor_id} in space {space_id}: {e}", exc_info=True)
+        return jsonify({"error": "An unexpected server error occurred."}), 500
 
 
 @vendors_bp.route('/register', methods=['POST'])
@@ -339,7 +460,8 @@ def verify_login_vendor():
             db.session.commit()
             
             # Generate access token
-            access_token = create_access_token(identity=user.user_id, expires_delta=timedelta(days=1))
+            access_token = create_access_token(identity=Vendors.vendor_id, expires_delta=timedelta(minutes=15))
+            # refresh_tokens = create_refresh_tokens(identity = Vendors.vendor_id , expires_delta = timedelta(days = 7))
             
             # Fetch vendor profile for name
             vendor_profile = Vendors.query.filter_by(user_id=user.user_id).first()
@@ -365,4 +487,49 @@ def verify_login_vendor():
     else:
         print(f"LOGIN_VERIFY_FAILED: User {user.user_id}. Invalid/expired/used OTP or type mismatch.")
         return jsonify({"message": "Invalid, expired, or used OTP code."}), 401
+    
+@vendors_bp.route('/patch/<string:vendor_id>' , methods = ['PATCH'])
+def patch_vendor(vendor_id):
+    data = request.json
+    vendors = Vendors.query.get(vendor_id)
+    if not vendors:
+        return jsonify({"message":"Vendor not found"}) , 404
+    
+    try:
+        updated_fields = []
+        if 'company_name' in data:
+            vendors.company_name = data['company_name']
+            updated_fields.append('company_name')
+
+        if 'contact_person' in data:
+            vendors.contact_person = data['contact_person']
+            updated_fields.append('contact_person')
+
+        if 'contact_number' in data:
+            vendors.contact_number = data['contact_number']
+            updated_fields.append('contact_number')
+
+        if 'vendor_email' in data:
+            vendors.vendor_email = data['vendor_email']
+            updated_fields.append('vendor_email')
+
+        if 'trade' in data:
+            vendors.trade = data['trade']
+            updated_fields.append('trade')
+
+        if not updated_fields:
+            return jsonify({"message":"No valid fields provided to upgrade"}),400
+        
+        db.session.commit()
+        return jsonify({
+            'message': 'Vendor updated successfully (PATCH).',
+            'updated_fields': updated_fields
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        # Log the error for debugging purposes
+        print(f"Vendor PATCH error for ID {vendor_id}: {e}") 
+        return jsonify({'error': 'An internal server error occurred during the update.'}), 500
+
 

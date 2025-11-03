@@ -3,8 +3,11 @@ from models import db, Spaces , Upload_Files
 from .upload_files_routes import upload_space_files
 import logging
 import os
+from flask_cors import CORS
+import json
 
 spaces_bp = Blueprint('Spaces' , __name__)
+CORS(spaces_bp)
 
 @spaces_bp.route('/get/spaces', methods=['GET'])
 def get_all_spaces():
@@ -79,16 +82,18 @@ def get_space_by_id(space_id):
 @spaces_bp.route('/post', methods=['POST'])
 def create_space():
     data = request.form
-    if not data or 'project_id' not in data or 'space_name' not in data or 'space_type' not in data:
+
+    required_fields = ['space_name', 'category']
+    if any(field not in data for field in required_fields):
         return jsonify({"error": "Missing required fields"}), 400
-    
+   
     attachments = request.files.getlist("uploads")
 
     new_space = Spaces(
         project_id=data['project_id'],
         space_name=data['space_name'],
         description=data.get('description', None),
-        space_type=data['space_type'],
+        space_type=data.get('space_type'),
         category = data.get('category', 'Custom'),
         status=data.get('status', 'To Do')
     )
@@ -96,6 +101,7 @@ def create_space():
     try:
         db.session.add(new_space)
         db.session.flush()
+        # db.session.commit()
         upload_space_files(attachments , new_space.space_id)
         db.session.commit()
         return jsonify({
@@ -113,6 +119,22 @@ def update_space(space_id):
     space = Spaces.query.get(space_id)
     if not space:
         return jsonify({"error": "Space not found"}), 404
+    
+    is_multipart = 'multipart/form-data' in request.content_type
+
+    attachments = []
+    file_to_delete = []
+
+    if is_multipart:
+        data = request.form
+        attachments = request.files.getlist("uploads")
+
+        files_to_delete_json = data.get('files_to_delete' , '[]')
+        try:
+            files_to_delete = json.loads(files_to_delete_json)
+        except json.JSONDecodeError:
+            return jsonify({"error": "Invalid JSON format for files_to_delete"}), 400
+
 
     data = request.get_json()
     try:
@@ -132,11 +154,17 @@ def delete_space(space_id):
     space = Spaces.query.get(space_id)
     if not space:
         return jsonify({"error": "Space not found"}), 404
-
+    
     try:
+        uploads = Upload_Files.query.filter_by(space_id=space_id).all()
+        for upload in uploads:
+            db.session.delete(upload)
+        db.session.commit()
         db.session.delete(space)
         db.session.commit()
-        return jsonify({"message": "Space deleted successfully"}), 200
+        return jsonify({"message": "Space and associated files deleted successfully"}), 200 
+    
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": "Failed to delete space"}), 500
+        current_app.logger.error(f"Error deleting space {space_id}: {e}")
+        return jsonify({"error": "Failed to delete space", "details": str(e)}), 500

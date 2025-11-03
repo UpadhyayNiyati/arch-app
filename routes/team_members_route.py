@@ -3,6 +3,7 @@ from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 from models import db , TeamMembership
 import uuid
+from flask_cors import CORS
 
 # Initialize Flask App and SQLAlchemy (placeholders)
 # app = Flask(__name__)
@@ -14,6 +15,7 @@ def generate_uuid():
     return str(uuid.uuid4())
 
 team_members_bp = Blueprint('team_members' , __name__)
+CORS(team_members_bp)
 
 # --- Placeholder TeamMembership Model ---
 class TeamMembership(db.Model):

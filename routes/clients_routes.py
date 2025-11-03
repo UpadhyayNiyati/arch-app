@@ -1,6 +1,6 @@
 from flask import Blueprint , jsonify , request
 from models import Clients , db , Projects ,Tasks , Projectvendor , Vendors , OtpCode , User
-from flask_jwt_extended import JWTManager , create_access_token , get_jwt_identity
+from flask_jwt_extended import JWTManager , create_access_token , get_jwt_identity 
 from werkzeug.security import generate_password_hash , check_password_hash
 from email.message import EmailMessage
 from datetime import datetime , timedelta , timezone
@@ -10,8 +10,11 @@ import datetime
 import random
 import uuid
 import logging
+from flask_cors import CORS
 
 clients_bp = Blueprint('clients', __name__)
+
+CORS(clients_bp)
 
 def send_email(recipients, subject, body):
     msg = EmailMessage()
@@ -833,8 +836,9 @@ def verify_client_registration_otp():
             # We use the primary user_id as the JWT identity
             access_token = create_access_token(
                 identity=user.user_id, 
-                expires_delta=timedelta(days=1)
+                expires_delta=timedelta(minutes = 15)
             )
+            # refresh_token = create_refresh_token(identity = user.user_id , expires_delta = timedelta(days = 7))
             
             # 3. Send confirmation email
             send_email(

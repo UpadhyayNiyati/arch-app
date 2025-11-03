@@ -3,8 +3,10 @@ from flask import Blueprint, jsonify, request
 from models import RolePermission, Role, Permission, db
 import uuid
 import datetime
+from flask_cors import CORS
 
 role_permissions_bp = Blueprint('role_permissions', __name__)
+CORS(role_permissions_bp)
 
 # --- POST: Assign a permission to a role ---
 @role_permissions_bp.route('/role_permissions', methods=['POST'])

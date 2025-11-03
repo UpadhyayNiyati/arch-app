@@ -2,8 +2,10 @@ from flask import Blueprint, jsonify, request
 from models import Tag, PinTag, db
 import uuid
 import datetime
+from flask_cors import CORS
 
 tags_bp = Blueprint('tags', __name__)
+CORS(tags_bp)
 
 # --- GET all tags ---
 @tags_bp.route('/tags', methods=['GET'])

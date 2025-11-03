@@ -2,8 +2,11 @@ from flask import Blueprint, jsonify, request
 from models import Notification, User, db , Projects ,ProjectAssignments , Tasks
 from datetime import datetime
 import uuid
+from flask_cors import CORS
 
 notifications_bp = Blueprint('notifications', __name__)
+
+CORS(notifications_bp)
 
 # # --- GET all notifications (typically for a specific user) ---
 # @notifications_bp.route('/notifications', methods=['GET'])

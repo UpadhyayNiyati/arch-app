@@ -30,6 +30,36 @@ def send_email(recipients, subject, body):
 #get all clients
 @clients_bp.route('/get_clients', methods=['GET'])
 def get_all_clients():
+    """
+    Retrieves a list of all clients.
+    ---
+    tags:
+      - Client Management
+    security:
+      - bearerAuth: []
+    responses:
+      200:
+        description: A list of all clients.
+        schema:
+          type: array
+          items:
+            type: object
+            properties:
+              client_id:
+                type: integer
+              client_name:
+                type: string
+              client_email:
+                type: string
+              client_phone:
+                type: string
+              client_address:
+                type: string
+              client_password:
+                type: string
+      500:
+        description: Server error.
+    """
     try:
 
         clients = Clients.query.all()
@@ -55,6 +85,42 @@ def get_all_clients():
 #get single client by id
 @clients_bp.route('/get_one_clients/<string:client_id>' , methods = ['GET'])
 def get_client_by_id(client_id):
+    """
+    Retrieves a single client by their ID.
+    ---
+    tags:
+      - Client Management
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: client_id
+        type: string
+        required: true
+        description: The ID of the client to retrieve.
+    responses:
+      200:
+        description: Client data retrieved successfully.
+        schema:
+          type: object
+          properties:
+            client_id:
+              type: string
+            client_name:
+              type: string
+            client_email:
+              type: string
+            client_phone:
+              type: string
+            client_address:
+              type: string
+            user_id:
+              type: integer
+            client_password:
+              type: string
+      404:
+        description: Client not found.
+    """
     client = Clients.query.get_or_404(client_id)
     if not client:
         return jsonify({"message":"Client not found"}) , 404
@@ -72,6 +138,45 @@ def get_client_by_id(client_id):
 #post client
 @clients_bp.route('/post_client', methods=['POST'])
 def add_client():
+    """
+    Adds a new client profile (requires a pre-existing user_id).
+    NOTE: For full registration, use the /register route.
+    ---
+    tags:
+      - Client Management
+    security:
+      - bearerAuth: []
+    consumes:
+      - application/json
+    parameters:
+      - in: body
+        name: client
+        description: Client data to be added.
+        required: true
+        schema:
+          type: object
+          required: [client_name, client_email, client_phone, client_address, user_id, client_password]
+          properties:
+            client_name:
+              type: string
+            client_email:
+              type: string
+            client_phone:
+              type: string
+            client_address:
+              type: string
+            user_id:
+              type: integer
+            client_password:
+              type: string
+    responses:
+      201:
+        description: Client added successfully!
+      400:
+        description: Missing required fields.
+      500:
+        description: Server error.
+    """
     data = request.json
     required_fields = ['client_name', 'client_email', 'client_phone', 'client_address' , 'client_password']
     
@@ -124,8 +229,43 @@ def add_client():
 @clients_bp.route('/update_client/<string:client_id>', methods=['PUT', 'PATCH'])
 def update_client(client_id):
     """
-    Updates client details based on the provided client_id.
-    Accepts JSON data for fields to be updated.
+    Updates client details based on the provided client_id (partial updates supported).
+    NOTE: Password updates should ideally be handled by a separate, secure route.
+    ---
+    tags:
+      - Client Management
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: client_id
+        type: string
+        required: true
+        description: The ID of the client to update.
+      - in: body
+        name: client_data
+        description: Fields to update for the client.
+        required: true
+        schema:
+          type: object
+          properties:
+            client_name:
+              type: string
+            client_email:
+              type: string
+            client_phone:
+              type: string
+            client_address:
+              type: string
+            client_password:
+              type: string
+    responses:
+      200:
+        description: Client updated successfully.
+      404:
+        description: Client not found.
+      500:
+        description: Internal server error.
     """
     data = request.get_json()
     
@@ -178,6 +318,27 @@ def update_client(client_id):
 #delete client
 @clients_bp.route('/del/client/<string:client_id>' , methods = ['DELETE'])
 def del_client(client_id):
+    """
+    Deletes a client profile by ID.
+    ---
+    tags:
+      - Client Management
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: client_id
+        type: string
+        required: true
+        description: The ID of the client to delete.
+    responses:
+      200:
+        description: Client deleted successfully.
+      404:
+        description: Client not found.
+      500:
+        description: Internal server error.
+    """
     client = Clients.query.get_or_404(client_id)
     if not client:
         return jsonify({"message" : "Client not found"}) , 404
@@ -189,6 +350,69 @@ def del_client(client_id):
 @clients_bp.route('/dashboard/<string:client_id>', methods=['GET'])
 # @jwt_required() # You might want to protect this route with authentication
 def get_client_dashboard(client_id):
+    """
+    Retrieves dashboard data for a specific client, including all their projects, 
+    tasks, and assigned vendors.
+    ---
+    tags:
+      - Client Dashboard
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: client_id
+        type: string
+        required: true
+        description: The ID of the client whose dashboard to retrieve.
+    responses:
+      200:
+        description: Client dashboard data retrieved successfully.
+        schema:
+          type: array
+          items:
+            type: object
+            properties:
+              project_id:
+                type: string
+              project_name:
+                type: string
+              project_status:
+                type: string
+              total_tasks:
+                type: integer
+              completed_tasks:
+                type: integer
+              project_tasks:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    task_name:
+                      type: string
+                    status:
+                      type: string
+                    due_date:
+                      type: string
+                      format: date-time
+              assigned_vendors:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    company_name:
+                      type: string
+                    role:
+                      type: string
+                    tasks_assigned:
+                      type: array
+                      items:
+                        type: object
+      404:
+        description: Client not found.
+      500:
+        description: Internal server error.
+    """
+
     try:
         # Check if the client exists
         client = Clients.query.get(client_id)
@@ -529,8 +753,48 @@ def get_client_dashboard(client_id):
 @clients_bp.route('/register', methods=['POST'])
 def register_client():
     """
-    Registers a new client, creates linked User and Client records, 
-    generates an OTP, commits all to the database atomically, and sends an email.
+    Registers a new client by creating linked records in the User, Clients, 
+    and OtpCode tables in an atomic transaction, then sends a verification email.
+    ---
+    tags:
+      - Client Auth
+    consumes:
+      - application/json
+    parameters:
+      - in: body
+        name: client
+        description: Client registration data
+        required: true
+        schema:
+          type: object
+          required: [client_name, client_email, client_phone, client_address, client_password]
+          properties:
+            client_name:
+              type: string
+            client_email:
+              type: string
+            client_phone:
+              type: string
+            client_address:
+              type: string
+            client_password:
+              type: string
+    responses:
+      201:
+        description: Client registered successfully. OTP sent for verification.
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            user_id:
+              type: integer
+      400:
+        description: Missing required fields or invalid input.
+      409:
+        description: A user/client with this email/phone already exists.
+      500:
+        description: Internal server error during registration or rollback.
     """
     data = request.json
     
@@ -738,6 +1002,42 @@ def register_client():
 
 @clients_bp.route('/login', methods=['POST'])
 def login_client_profile():
+    """
+    First stage of client login: Authenticates credentials, cleans up old OTPs, 
+    generates a new login OTP, saves it, and sends it via email.
+    ---
+    tags:
+      - Client Auth
+    consumes:
+      - application/json
+    parameters:
+      - in: body
+        name: credentials
+        description: Client login credentials
+        required: true
+        schema:
+          type: object
+          required: [client_email, client_password]
+          properties:
+            client_email:
+              type: string
+            client_password:
+              type: string
+    responses:
+      200:
+        description: OTP sent successfully for login verification.
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+      400:
+        description: Email and password are required.
+      401:
+        description: Invalid email or password.
+      500:
+        description: Internal server error.
+    """
     data = request.json
     client_email = data.get("client_email")
     client_password = data.get("client_password")
@@ -802,6 +1102,50 @@ def login_client_profile():
 
 @clients_bp.route('/verify_registration_otp', methods=['POST'])
 def verify_client_registration_otp():
+    """
+    Verifies the registration OTP code provided by the client.
+    If valid, marks the OTP as used, generates and returns a JWT access token.
+    ---
+    tags:
+      - Client Auth
+    consumes:
+      - application/json
+    parameters:
+      - in: body
+        name: verification
+        description: Email and OTP for registration verification.
+        required: true
+        schema:
+          type: object
+          required: [client_email, otp_code]
+          properties:
+            client_email:
+              type: string
+            otp_code:
+              type: string
+    responses:
+      200:
+        description: Registration complete, OTP verified, and login successful.
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            access_token:
+              type: string
+            client_id:
+              type: integer
+            user_id:
+              type: integer
+      400:
+        description: Missing email or OTP code.
+      401:
+        description: Invalid, expired, or used OTP code.
+      404:
+        description: User or Client profile not found.
+      500:
+        description: Server error during finalization.
+    """
     data = request.json
     user_email = data.get("client_email")
     otp_code = data.get("otp_code")
@@ -865,6 +1209,50 @@ def verify_client_registration_otp():
 # --- NEW: OTP Verification for Client Login ---
 @clients_bp.route('/verify_login_otp', methods=['POST'])
 def verify_client_login_otp():
+    """
+    Second stage of client login: Verifies the login OTP code.
+    If valid, marks the OTP as used, generates and returns a JWT access token.
+    ---
+    tags:
+      - Client Auth
+    consumes:
+      - application/json
+    parameters:
+      - in: body
+        name: verification
+        description: Email and OTP for login verification.
+        required: true
+        schema:
+          type: object
+          required: [client_email, otp_code]
+          properties:
+            client_email:
+              type: string
+            otp_code:
+              type: string
+    responses:
+      200:
+        description: Login successful. Access token returned.
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            access_token:
+              type: string
+            client_id:
+              type: integer
+            user_id:
+              type: integer
+      400:
+        description: Missing email or OTP code.
+      401:
+        description: Invalid, expired, or used OTP code.
+      404:
+        description: User or Client profile not found.
+      500:
+        description: Server error during finalization.
+    """
     data = request.json
     user_email = data.get("client_email")
     otp_code = data.get("otp_code")

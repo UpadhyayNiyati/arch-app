@@ -7,10 +7,7 @@ from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
-
-
-
-
+from flasgger import Swagger
 # from flask_bcrypt import Bcrypt 
 import os
 
@@ -20,6 +17,14 @@ load_dotenv()
 app = Flask(__name__)
 # app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # app.config['ALLOWED_EXTENSIONS'] = ALLOWED_EXTENSIONS
+
+app.config['SWAGGER'] = {
+    'title': 'My Free Flask API Docs',
+    'uiversion': 3,  # Use OpenAPI 3.0
+    'specs_route': '/apidocs/' # The URL path to access the docs
+}
+
+swagger = Swagger(app)
 
 CORS(app)
 
@@ -65,6 +70,173 @@ jwt = JWTManager(app)
 
 db.init_app(app)
 
+@app.route('/hello', methods=['GET'])
+def hello_world():
+    """
+    A simple Hello World endpoint.
+    ---
+    tags:
+      - Basic Endpoints
+    responses:
+      200:
+        description: A successful welcome message.
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: Hello from Flasgger!
+    """
+    return jsonify({'message': 'Hello from Flasgger!'})
+
+@app.route('/create_user', methods=['POST'])
+def create_user():
+    """
+    Creates one or more new user accounts.
+    ---
+    tags:
+      - Users
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: array
+          description: A list of users to create.
+          items:
+            type: object
+            required:
+              - username
+              - email
+            properties:
+              username:
+                type: string
+                description: The user's desired username.
+              email:
+                type: string
+                format: email
+                description: The user's email address.
+    responses:
+      201:
+        description: User(s) created successfully.
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            created_users:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  username:
+                    type: string
+                  status:
+                    type: string
+      400:
+        description: Invalid input data or no valid users provided.
+    """
+    data = request.get_json()
+    
+    if not isinstance(data, list):
+        data = [data] if data else []
+
+    created_users = []
+    
+    for index,user_data in enumerate(data):
+        username = user_data.get('username')
+        email = user_data.get('email')
+        
+        if username and email:
+            # --- Mocking the DB logic for example ---
+            base_mock_id = int(datetime.now().timestamp() * 1000) % 10000 
+            mock_id = base_mock_id + index
+            
+            created_users.append({
+                "id": mock_id, 
+                "username": username,
+                "status": "Created"
+            })
+            
+    if created_users:
+        return jsonify({
+            "message": f"Successfully created {len(created_users)} user(s).",
+            "created_users": created_users
+        }), 201
+    else:
+        return jsonify({
+            "message": "No valid user data found in the request."
+        }), 400
+    
+@app.route('/update_user/<int:user_id>', methods=['PUT'])
+def update_user(user_id):
+    """
+    Updates an existing user account by ID.
+    ---
+    tags:
+      - Users
+    parameters:
+      - name: user_id
+        in: path
+        type: integer
+        required: true
+        description: The ID of the user to update.
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          properties:
+            username:
+              type: string
+              description: The new username. (Optional)
+            email:
+              type: string
+              format: email
+              description: The new email address. (Optional)
+    responses:
+      200:
+        description: User updated successfully.
+        schema:
+          type: object
+          properties:
+            id:
+              type: integer
+            message:
+              type: string
+      400:
+        description: Invalid input data.
+      404:
+        description: User not found.
+    """
+    data = request.get_json()
+    
+    # --- Start Update Logic ---
+    
+    # 1. Check if data is present
+    if not data:
+        return jsonify({"message": "No input data provided"}), 400
+
+    # 2. In a real application, you would:
+    #    a. Query the database to find the user by user_id.
+    #    b. If user not found, return jsonify({"message": "User not found"}), 404
+    #    c. Update the user's fields with the data received.
+    #    d. Commit the changes to the database (db.session.commit()).
+    
+    # --- Mock Response for testing ---
+    if user_id == 999:
+        return jsonify({"message": f"User with ID {user_id} not found"}), 404
+
+    # Simulate a successful update
+    updated_fields = ", ".join(data.keys())
+    
+    return jsonify({
+        "id": user_id, 
+        "message": f"User ID {user_id} updated successfully. Fields updated: {updated_fields}"
+    }), 200
+
 # Initialize Flask-Migrate after initializing the app and db
 migrate = Migrate(app, db)
 # bcrypt = Bcrypt(app)
@@ -96,6 +268,7 @@ from routes.super_user_routes import super_user_bp
 from routes.teams_routes import teams_bp
 # from routes.payments_routes import payments_bp
 from routes.invoices_routes import invoices_bp
+from routes.preset_routes import preset_bp
 
 app.register_blueprint(teams_bp , url_prefix = "/api/teams")
 app.register_blueprint(roles_bp, url_prefix="/api/roles")
@@ -118,17 +291,21 @@ app.register_blueprint(tags_bp , url_prefix = "/api/tags")
 app.register_blueprint(spaces_bp , url_prefix = "/api/spaces")
 app.register_blueprint(drawings_bp , url_prefix = "/api/drawings")
 app.register_blueprint(inspiration_bp , url_prefix = "/api/inspiration")
-app.register_blueprint(upload_bp , url_prefix = '/api/upload_files')
+app.register_blueprint(upload_bp , url_prefix = '/api')
 app.register_blueprint(template_cards_bp , url_prefix = '/api/template_cards')
 app.register_blueprint(cards_bp , url_prefix = '/api/cards')
 app.register_blueprint(companies_bp , url_prefix = '/api/companies')
 app.register_blueprint(super_user_bp , url_prefix = '/api/super_user')
+app.register_blueprint(preset_bp , url_prefix = '/api/preset')
 
 #create tables
 with app.app_context():
     db.create_all()
     print("✅ Tables created successfully!")
 
+
+
+print(os.path.exists("uploads/inspiration_uploads/2a59677d-b072-4570-925c-255a85efe195/Screenshot_2025-01-21_155435.png"))
 
 if __name__ == "__main__":
     app.run(debug = True)

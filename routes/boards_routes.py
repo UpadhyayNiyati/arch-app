@@ -18,10 +18,53 @@ def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in current_app.config.get('ALLOWED_EXTENSIONS', {'png', 'jpg', 'jpeg', 'gif'})
 
+def _serialize_board(board):
+    """Converts a Boards object into a dictionary, including associated files."""
+    board_dict = {
+        'board_id': board.board_id,
+        'project_id': board.project_id,
+        'board_name': board.board_name,
+        'board_description': board.board_description,
+        'created_at': board.created_at.isoformat(),
+        'files' : []
+    }
+    
+    # Fetch and append associated files
+    # Note: Using board_id here, which is correct for Boards/Upload_Files relationship
+    find_uploads = db.session.query(Upload_Files).filter(Upload_Files.board_id == board.board_id).all()
+    for file in find_uploads:
+        file_dict = {
+            "file_id" : file.file_id,
+            "filename":file.filename,
+            "file_size":file.file_size,
+            "file_path":file.file_path
+        }
+        board_dict["files"].append(file_dict)
+    
+    return board_dict
+
 
 # --- GET all boards ---
 @boards_bp.route('/boards', methods=['GET'])
 def get_all_boards():
+    """
+    Retrieves a list of all boards, including their associated file details.
+    
+    ---
+    tags:
+      - Board Management
+    responses:
+      200:
+        description: A list of boards retrieved successfully.
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/BoardDetail'
+      500:
+        description: An error occurred while fetching boards.
+    """
     try:
         all_boards = []
         boards = Boards.query.all()
@@ -56,6 +99,31 @@ def get_all_boards():
 # --- GET a single board by ID ---
 @boards_bp.route('/boards/<string:board_id>', methods=['GET'])
 def get_board_by_id(board_id):
+    """
+    Retrieves a single board by ID, including its associated files, pins, and tags.
+    
+    ---
+    tags:
+      - Board Management
+    parameters:
+      - in: path
+        name: board_id
+        schema:
+          type: string
+        required: true
+        description: The UUID of the board to retrieve.
+    responses:
+      200:
+        description: Board details retrieved successfully.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BoardFullDetail'
+      404:
+        description: Board not found.
+      500:
+        description: An error occurred while fetching the board.
+    """
     try:
         board = Boards.query.get_or_404(board_id)
         board_dict = {
@@ -83,6 +151,44 @@ def get_board_by_id(board_id):
 # --- POST a new board ---
 @boards_bp.route('/boards', methods=['POST'])
 def add_board():
+    """
+    Creates a new board. Supports multipart/form-data for files.
+    
+    ---
+    tags:
+      - Board Management
+    requestBody:
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            properties:
+              project_id:
+                type: string
+                description: The ID of the project the board belongs to. (Required)
+              board_name:
+                type: string
+                description: The name of the new board. (Required)
+              board_description:
+                type: string
+                description: A description for the board. (Optional)
+              uploads:
+                type: array
+                items:
+                  type: string
+                  format: binary
+                description: Files to upload and associate with the board. (Optional)
+            required:
+              - project_id
+              - board_name
+    responses:
+      200:
+        description: Board created successfully.
+      400:
+        description: Missing required fields or invalid input.
+      500:
+        description: Failed to create the board.
+    """
     data = request.json
     required_fields = ['project_id', 'board_name']
     
@@ -110,6 +216,50 @@ def add_board():
 # --- PUT (update) an existing board ---
 @boards_bp.route('/boards/<string:board_id>', methods=['PUT'])
 def update_board(board_id):
+    """
+    Updates an existing board's details and manages file uploads/deletions. Supports multipart/form-data.
+    
+    ---
+    tags:
+      - Board Management
+    parameters:
+      - in: path
+        name: board_id
+        schema:
+          type: string
+        required: true
+        description: The UUID of the board to update.
+    requestBody:
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            properties:
+              board_name:
+                type: string
+                description: The new name for the board.
+              board_description:
+                type: string
+                description: The new description for the board.
+              uploads:
+                type: array
+                items:
+                  type: string
+                  format: binary
+                description: New files to upload.
+              files_to_delete:
+                type: string
+                description: JSON string of file_ids to delete (e.g., "[1, 2, 3]").
+    responses:
+      200:
+        description: Board updated successfully.
+      400:
+        description: Invalid files_to_delete format.
+      404:
+        description: Board not found.
+      500:
+        description: Failed to update the board.
+    """
     board = Boards.query.get_or_404(board_id)
     if not board:
         return jsonify({"error":"Board not found"}),404
@@ -146,20 +296,47 @@ def update_board(board_id):
                 board.revision_number = (board.revision_number or 0) + 1
             update_board_files(board.board_id, attachments, files_to_delete)
         db.session.commit()
+        updated_board = Boards.query.get(board_id)
+        if not updated_board:
+            # Should theoretically not happen, but a safe check
+            return jsonify({"error": "Board disappeared after update!"}), 500
         return jsonify({"message": "Board updated successfully",
                         "board_id":board.board_id,
                         "new_revision":board.revision_number,
                         "files_added":len(attachments),
-                        "files_deleted":len(files_to_delete)
+                        "files_deleted":len(files_to_delete),
+                        "board": _serialize_board(updated_board)
                         }), 200
     
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Error updating board: {e}")
         return jsonify({"error": "Failed to update board"}), 500
+    
 # --- DELETE a board ---
 @boards_bp.route('/boards/<string:board_id>', methods=['DELETE'])
 def delete_board(board_id):
+    """
+    Deletes a board and its associated files.
+    
+    ---
+    tags:
+      - Board Management
+    parameters:
+      - in: path
+        name: board_id
+        schema:
+          type: string
+        required: true
+        description: The UUID of the board to delete.
+    responses:
+      200:
+        description: Board deleted successfully.
+      404:
+        description: Board not found.
+      500:
+        description: Failed to delete the board.
+    """
     board = Boards.query.get_or_404(board_id)
     if not board:
         return jsonify({"error":"Board not found"}),404

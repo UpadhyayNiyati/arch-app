@@ -25,7 +25,17 @@ def create_company():
         )
         db.session.add(new_company)
         db.session.commit()
-        return jsonify({'message':'Company created successfully'}), 201
+        return jsonify({'message':'Company created successfully',
+                        "company" : {
+                            "company_id":new_company.company_id , 
+                            "company_name":new_company.company_name,
+                            "company_address":new_company.company_address,
+                            "company_email":new_company.company_email,
+                            "company_phone":new_company.company_phone,
+                            "created_at": new_company.created_at.isoformat() if hasattr(new_company, "created_at") else None
+
+                        }
+                    }), 201
     except Exception as e:
         db.session.rollback()
         return jsonify({"message": "Failed to create company", "error": str(e)}), 400
@@ -84,7 +94,15 @@ def update_company(company_id):
             company.company_phone = data['company_phone']
         
         db.session.commit()
-        return jsonify({"message": "Company updated successfully"}), 200
+        updated_company_dict = {
+            'company_id' : company.company_id,
+            'company_name' : company.company_name,
+            'company_address' : company.company_address,
+            'company_email' : company.company_email,
+            'company_phone' : company.company_phone,
+            'created_at' : company.created_at
+        }
+        return jsonify(updated_company_dict), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500

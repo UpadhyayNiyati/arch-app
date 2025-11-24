@@ -11,6 +11,7 @@ from api.exception import FileTooLargeError
 from models import Upload_Files, db
 from flask_cors import CORS
 
+
 upload_bp = Blueprint("upload_files", __name__)
 CORS(upload_bp)
 
@@ -43,6 +44,15 @@ def validate_file_size(file):
     
     if file_length > MAX_FILE_SIZE:
         raise FileTooLargeError(file.filename, MAX_FILE_SIZE)
+    
+@upload_bp.route('/uploads/<path:filename>')
+def serve_file(filename):
+    try:
+        print(f"Serving file: {filename}")
+        # This will look for the file in the 'uploads' directory
+        return send_from_directory(UPLOAD_FOLDER, filename)
+    except FileNotFoundError:
+        return "File not found", 404
 
 def delete_selected_files(file_ids):
     """Deletes files from disk and their records from the database based on a list of file_ids."""
@@ -87,6 +97,31 @@ def create_pin_folder(pin_id):
         raise
         
     return folder_path
+
+# def download_url_to_filestorage(url, filename="external_image"):
+#     """Downloads an image from a URL and converts it into a FileStorage object."""
+#     try:
+#         response = requests.get(url, stream=True, timeout=10)
+#         response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
+
+#         # Determine content type and extension
+#         content_type = response.headers.get('Content-Type', 'application/octet-stream')
+#         ext = '.' + content_type.split('/')[-1] if 'image/' in content_type else '.jpg'
+        
+#         # Create an in-memory file
+#         file_data = io.BytesIO(response.content)
+        
+#         # Create a FileStorage object to mimic a user upload
+#         file_storage = FileStorage(
+#             stream=file_data,
+#             filename=filename + ext,
+#             content_type=content_type,
+#             name='uploads' # Must match the field name your handler expects
+#         )
+#         return file_storage
+#     except requests.exceptions.RequestException as e:
+#         current_app.logger.error(f"Error downloading external URL {url}: {e}")
+#         return None
 
 def create_space_folder(space_id):
     """
@@ -720,6 +755,53 @@ def upload_template_files(files, template_id):
             except Exception as e:
                 logging.exception(f"Error uploading file for Template {template_id}: {str(e)}")
                 raise e
+            
+def update_task_files(files, task_id,  files_to_delete):
+    """Handles deletion of old files and upload of new files for a Pin."""
+    try:
+        folder_path = create_pin_folder(task_id) 
+        
+        # 1. Delete files marked for deletion
+        if files_to_delete:
+            delete_selected_files(files_to_delete)
+        
+        # 2. Upload new files
+        for file in files:
+            if isinstance(file, FileStorage):
+                try:
+                    original_filename = secure_filename(file.filename)
+                    validate_file_size(file)
+                    base, ext = os.path.splitext(original_filename)
+                    unique_filename = f"{base}{ext}"
+                    file_path = os.path.join(folder_path, unique_filename)
+
+                    file.save(file_path)
+
+                    file_id = str(uuid.uuid4())
+                    file_size_kb = os.path.getsize(file_path) / 1024
+
+                    upload_file = Upload_Files(
+                        file_id=file_id,
+                        template_id=task_id,
+                        filename=unique_filename,
+                        file_path=file_path,
+                        file_size=file_size_kb,
+                        # record_time_according_to_timezone=localized_time
+                    )
+                    db.session.add(upload_file)
+
+                except Exception as e:
+                    logging.exception(f"Error updating Pin file {original_filename}: {str(e)}")
+                    db.session.rollback() 
+                    raise e
+        
+        db.session.commit() # Commit all changes for this update operation
+
+    except Exception as e:
+        logging.exception(f"Failed to update template files for ID {task_id}: {str(e)}")
+        db.session.rollback()
+        raise e
+    
 
 
 def update_template_files(files, template_id, localized_time, files_to_delete):
@@ -1201,11 +1283,11 @@ def update_inspiration_files(files, inspiration_id ,  files_to_delete):
 
 # --- Flask Route (Copied from Original Snippet) ---
 
-@upload_bp.route('/uploads/<path:filename>')
-def serve_file(filename):
-    """Route to serve files from the 'uploads' directory."""
-    try:
-        # This will look for the file in the 'uploads' directory
-        return send_from_directory(UPLOAD_FOLDER, filename)
-    except FileNotFoundError:
-        return "File not found", 404
+# @upload_bp.route('/uploads/<path:filename>')
+# def serve_file(filename):
+#     """Route to serve files from the 'uploads' directory."""
+#     try:
+#         # This will look for the file in the 'uploads' directory
+#         return send_from_directory(UPLOAD_FOLDER, filename)
+#     except FileNotFoundError:
+#         return "File not found", 404

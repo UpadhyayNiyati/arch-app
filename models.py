@@ -60,6 +60,8 @@ class Vendors(db.Model):
     vendor_email = db.Column(db.String(255) , unique = True , nullable =True)
     trade = db.Column(db.String(255) , nullable = True)
     space_id = db.Column(db.String(50) , db.ForeignKey('spaces.space_id') , nullable = True)
+    tags = db.Column(db.String(255)) # Storing tags as a comma-separated string
+    notes = db.Column(db.String(255) , nullable = True)
 
 class Templates(db.Model):
     __tablename__ = 'templates'
@@ -88,7 +90,7 @@ class Projects(db.Model):
     team_id = db.Column(db.String(50), db.ForeignKey('teams.team_id'), nullable=True) 
     client_id = db.Column(db.String(50), db.ForeignKey('clients.client_id'), nullable=True)
     company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
-
+    preset_id = db.Column(db.String(64) , db.ForeignKey('preset.preset_id') , nullable = True)
     client = db.relationship('Clients', backref=db.backref('projects_client', lazy=True))
     
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=True)
@@ -122,10 +124,10 @@ class Tasks(db.Model):
     logged_hours = db.Column(db.Float , nullable = True , default = 0)
     due_date = db.Column(db.Date , nullable = True)
     # is_completed = db.Column(db.Boolean, default=False, nullable=False)
-    # completed_at = db.Column(db.DateTime , nullable = True)
+    completed_at = db.Column(db.DateTime , nullable = True)
     # created_at = db.Column(db.DateTime , default = datetime.utcnow , nullable = True)
     priority = db.Column(db.String(50) , nullable = True)
-    assigned_to = db.Column(db.String(50) , db.ForeignKey('user.user_id') , nullable = True)
+    assigned_to = db.Column(db.String(255))
     updated_at = db.Column(db.DateTime , default = datetime.utcnow , onupdate = datetime.utcnow , nullable = True)
     actual_hours = db.Column(db.Float , nullable = True)
      # Used to categorize the task (e.g., 'Construction', 'Meeting', 'Site Visit', 'Procurement')
@@ -134,6 +136,7 @@ class Tasks(db.Model):
     #add this new column
     assigned_vendor = db.Column(db.String(50), db.ForeignKey('vendors.vendor_id'), nullable=True)
     assigned_team = db.Column(db.String(50), db.ForeignKey('teams.team_id'), nullable=True)
+    date = db.Column(db.DateTime, default=datetime.utcnow, nullable=True)
 
      # --- EXISTING FIELDS ---
     # requires_site_visit = db.Column(db.Boolean, nullable=True, default=False)
@@ -262,6 +265,7 @@ class Spaces(db.Model):
     space_type = db.Column(db.String(100), nullable=True)
     status = db.Column(db.String(50), nullable=True, default="To Do")
     category = db.Column(db.String(100), nullable=True , default = "Custom")
+    preset_id = db.Column(db.String(64) ,db.ForeignKey('preset.preset_id'), nullable = True)
     # created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=True)
 
 class Drawings(db.Model):
@@ -269,10 +273,11 @@ class Drawings(db.Model):
     drawing_id = db.Column(db.String(50), primary_key=True, default=generate_uuid)
     space_id = db.Column(db.String(50), db.ForeignKey('spaces.space_id'), nullable=True)
     drawing_name = db.Column(db.String(255), nullable=True)
-    description = db.Column(db.Text)
+    description = db.Column(db.Text , nullable = True)
     # drawing_url = db.Column(db.String(255), nullable=False)#only url will be updated if we put new drawing not name and revision_number 
     revision_number = db.Column(db.Integer, default=1, nullable=True)#allows to track every single change made to our file each new version gets a new number with new record
     uploaded_at = db.Column(db.TIMESTAMP, server_default=db.func.now(), nullable=True)
+    tags = db.Column(db.String(255)) # Storing tags as a comma-separated string
 
 class Inspiration(db.Model):
     __tablename__ = "inspiration"
@@ -512,4 +517,27 @@ class UserToken(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     expires_at = db.Column(db.DateTime, nullable=False)
 
+class Pinterest(db.Model):
+    __tablename__ = 'pinterest_tokens'
+    pinterest_id = db.Column(db.String(50), primary_key=True , default=generate_uuid())
+    user_id = db.Column(db.String(50), db.ForeignKey('user.user_id'), nullable=True, unique=True)
+    access_token = db.Column(db.Text, nullable=True)
+    refresh_token = db.Column(db.Text, nullable=True)
+    token_type = db.Column(db.String(50))
+    expires_in = db.Column(db.DateTime , default = datetime.utcnow , nullable = True) 
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    scopes = db.Column(db.Text)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    pinterest_account_id = db.Column(db.String(255), unique=True, nullable=False) # The user ID from Pinterest (e.g., '123456789')
+    pinterest_username = db.Column(db.String(255), nullable = True)
+
+
+class Preset(db.Model):
+    __tablename__ = 'preset'
+    preset_id = db.Column(db.String(64) , primary_key = True , default = generate_uuid)
+    preset_name = db.Column(db.String(255) , nullable = True)
+    preset_description = db.Column(db.String(255) , nullable = True)
+    preset_type = db.Column(db.String(255) , nullable = True)
+    space_id = db.Column(db.String(50) , db.ForeignKey('spaces.space_id') , nullable = True)
+    project_id = db.Column(db.String(50), db.ForeignKey("projects.project_id"))
 

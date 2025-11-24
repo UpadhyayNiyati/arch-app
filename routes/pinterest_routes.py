@@ -231,7 +231,7 @@ import os
 # from models import PinterestTokens, db 
 
 # Define the Pinterest token endpoint
-PINTEREST_TOKEN_URL = "https://api.pinterest.com/v5/oauth/token"
+PINTEREST_TOKEN_URL = TOKEN_URL
 CLIENT_ID = os.getenv("PINTEREST_CLIENT_ID")
 CLIENT_SECRET = os.getenv("PINTEREST_CLIENT_SECRET")
 
@@ -308,7 +308,7 @@ def get_pinterest_user_info():
         
     # 3. Use the valid access token for the actual Pinterest API call
     headers = {"Authorization": f"Bearer {access_token}"}
-    pinterest_api_url = "https://api.pinterest.com/v5/user_account"
+    pinterest_api_url = TOKEN_URL
     
     try:
         api_response = requests.get(pinterest_api_url, headers=headers)
@@ -327,12 +327,12 @@ def pinterest_auth():
     if not code:
         return jsonify({"error": "Code not provided"}), 400
 
-    token_url = "https://api.pinterest.com/v5/oauth/token"
+    token_url = TOKEN_URL
 
     payload = {
         "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": "http://localhost:5173",
+        "redirect_uri": PINTEREST_REDIRECT_URI,
         "client_id": PINTEREST_CLIENT_ID,
         "client_secret": PINTEREST_CLIENT_SECRET,
     }
@@ -345,7 +345,7 @@ def pinterest_auth():
 
     # Store into database
     new_token = Pinterest(
-        user_id=user.id,
+        user_id=current_user.id,
         access_token=tokens["access_token"],
         refresh_token=tokens.get("refresh_token")
     )
@@ -359,7 +359,7 @@ def pinterest_auth():
 def refresh_pinterest_token():
     token_obj = Pinterest.query.filter_by(user_id=current_user.id).first()
 
-    refresh_url = "https://api.pinterest.com/v5/oauth/token"
+    refresh_url = TOKEN_URL
 
     payload = {
         "grant_type": "refresh_token",

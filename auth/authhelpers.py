@@ -1,0 +1,69 @@
+from datetime import datetime, timedelta
+from functools import wraps
+import os
+
+from flask import request
+from flask import jsonify
+import jwt
+
+
+ACCESS_TOKEN_SECRET=str(os.getenv('ACCESS_TOKEN_SECRET'))
+REFRESH_TOKEN_SECRET=str(os.getenv('REFRESH_TOKEN_SECRET'))
+
+
+refresh_token_expiry_time=timedelta(days=7)
+
+
+
+def create_access_token(user_id, company_id):
+    expiration = datetime.utcnow() + timedelta(minutes=30)  # expires in 10 sec
+    return jwt.encode(
+        {'user_id': user_id, 'company_id': company_id, 'exp': expiration},
+        ACCESS_TOKEN_SECRET,
+        algorithm='HS256'
+    )
+
+
+def create_refresh_token(user_id,company_id):
+    expiration = datetime.utcnow() + timedelta(days=7)  # Refresh token expires in 7 days
+    return jwt.encode({'user_id': user_id,'company_id':company_id, 'exp': expiration}, REFRESH_TOKEN_SECRET, algorithm='HS256')
+
+
+def decode_jwt(jwt_token, secret_key):
+    try:
+        # Decode the token and verify its signature
+        decoded = jwt.decode(jwt_token, secret_key, algorithms=["HS256"])  # Replace HS256 with your algorithm
+        return decoded
+    except jwt.ExpiredSignatureError:
+        # Token has expired
+        return {"message": "Token has expired"}
+    except jwt.InvalidTokenError:
+        # Token is invalid
+        return {"message": "Invalid token"}
+   
+
+
+
+def jwt_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return jsonify({"error": "Authorization header is missing or invalid"}), 401
+
+        token = auth_header.split(" ")[1]
+        try:
+            payload = decode_jwt(token,ACCESS_TOKEN_SECRET)
+            user_id = payload.get("user_id")
+            if not user_id:
+                return jsonify({"message":"Unauthorized Token"}),401
+
+        except Exception as e:
+            return jsonify({"error": str(e)}), 401
+
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def get_auth_key_from_request(request):
+    pass

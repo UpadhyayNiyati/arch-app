@@ -92,7 +92,7 @@ class Projects(db.Model):
     company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
     preset_id = db.Column(db.String(64) , db.ForeignKey('preset.preset_id') , nullable = True)
     client = db.relationship('Clients', backref=db.backref('projects_client', lazy=True))
-    
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=True)
 
 class ProjectAssignments(db.Model):
@@ -136,7 +136,7 @@ class Tasks(db.Model):
     #add this new column
     assigned_vendor = db.Column(db.String(50), db.ForeignKey('vendors.vendor_id'), nullable=True)
     assigned_team = db.Column(db.String(50), db.ForeignKey('teams.team_id'), nullable=True)
-    date = db.Column(db.DateTime, default=datetime.utcnow, nullable=True)
+    date = db.Column(db.DateTime, nullable=True)
 
      # --- EXISTING FIELDS ---
     # requires_site_visit = db.Column(db.Boolean, nullable=True, default=False)

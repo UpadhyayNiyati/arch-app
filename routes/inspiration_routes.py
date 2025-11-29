@@ -1,6 +1,7 @@
 from flask import Blueprint , jsonify , request , current_app
-from models import db , Inspiration , Upload_Files
+from models import db , Inspiration , Upload_Files , User
 from .upload_files_routes import upload_inspiration_files , update_inspiration_files
+from flask_jwt_extended import jwt_required , get_jwt_identity , create_access_token , create_refresh_token
 import logging
 import json
 import os
@@ -10,6 +11,7 @@ from flask_cors import CORS
 from werkzeug.datastructures import FileStorage
 import requests
 import io
+from .user_routes import custom_jwt_required,jwt_required, jwt_required_now
 
 inspiration_bp = Blueprint('Inspiration' , __name__)
 
@@ -60,6 +62,7 @@ def _serialize_inspiration(inspiration):
     return insp_dict
 
 @inspiration_bp.route('/get', methods=['GET'])
+@jwt_required_now
 def get_all_inspirations():
     """
     Retrieve All Inspirations
@@ -124,6 +127,7 @@ def get_all_inspirations():
 
 
 @inspiration_bp.route('/get/<string:inspiration_id>', methods=['GET'])
+@jwt_required_now
 def get_inspiration_by_id(inspiration_id):
     """
     Get Inspiration by ID
@@ -193,6 +197,7 @@ def get_inspiration_by_id(inspiration_id):
         return jsonify({"error":"Cannot retrieve by id"}) , 500
     
 @inspiration_bp.route('/get/space/<string:space_id>', methods=['GET'])
+@jwt_required_now
 def get_inspirations_by_space_id(space_id):
     """
     Get Inspirations by Space ID
@@ -273,6 +278,7 @@ def get_inspirations_by_space_id(space_id):
 # The blueprint name is assumed to be defined elsewhere: inspiration_bp = Blueprint('Inspiration', __name__)
 
 @inspiration_bp.route('/post', methods=['POST'])
+@jwt_required_now
 def create_inspiration():
     """
     Creates a new inspiration entry, stores files, and handles the transaction atomically.
@@ -534,6 +540,7 @@ def create_inspiration():
 
 
 @inspiration_bp.route('/update_inspirations/<string:inspiration_id>', methods=['PUT'])
+@jwt_required_now
 def update_inspiration(inspiration_id):
     """
     Updates a single inspiration record (metadata and/or files) by its ID.
@@ -653,6 +660,7 @@ def update_inspiration(inspiration_id):
  
     
 @inspiration_bp.route('/update/space/<string:space_id>', methods=['PUT'])
+@jwt_required_now
 def update_inspirations_by_space_id_with_files(space_id):
     """
     Updates metadata for ALL inspiration records associated with a space_id
@@ -768,6 +776,7 @@ def update_inspirations_by_space_id_with_files(space_id):
         return jsonify({"error": f"A database error occurred during the update: {str(e)}"}), 500
     
 @inspiration_bp.route('/del_inspirations/<string:inspiration_id>', methods=['DELETE'])
+@jwt_required_now
 def delete_inspiration(inspiration_id):
     """
     Deletes a single inspiration record and its associated files by ID.
@@ -802,6 +811,7 @@ def delete_inspiration(inspiration_id):
         return jsonify({"error": "Failed to delete inspiration"}), 500   
     
 @inspiration_bp.route('/delete/space/<string:space_id>', methods=['DELETE'])
+@jwt_required_now
 def delete_inspirations_by_space_id(space_id):
     """
     Deletes all inspiration records and their associated files for a given space_id.

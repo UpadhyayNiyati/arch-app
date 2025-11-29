@@ -1,5 +1,6 @@
 from flask import  Blueprint , jsonify , request , current_app
 from models import db , Preset ,  Spaces 
+from flask_jwt_extended import get_jwt_identity , create_refresh_token , create_access_token , jwt_required
 import logging
 import os
 from flask_cors import CORS
@@ -38,7 +39,8 @@ def serialize_preset(preset):
         'preset_name': preset.preset_name,
         'preset_description': preset.preset_description,
         'space_id': preset.space_id,
-        'space_details': None , # Initialize the nested structure
+        'spaces_count' : 0,
+        'space_details': [] , # Initialize the nested structure
         'project_id':preset.project_id
     }
 
@@ -48,6 +50,10 @@ def serialize_preset(preset):
             # Query the Spaces table for the related space
             # Note: In a production app, you might use db.relationship for cleaner access
             space = Spaces.query.get(preset.space_id)
+            related_spaces = Spaces.query.filter_by(preset_id=preset.preset_id).all()
+            serialized_spaces = [serialize_space(space) for space in related_spaces]
+            data['spaces_count'] = len(serialized_spaces)
+            data['spaces_details'] = serialized_spaces
 
             if space:
                 # Add the simplified serialized space details (containing only space_id and space_name)
@@ -55,6 +61,7 @@ def serialize_preset(preset):
 
         except Exception as e:
             # Handle potential database or ORM errors during lookup
+            logger.error(f"Error fetching related Spaces for Preset {preset.preset_id}: {e}")
             print(f"Error fetching Space {preset.space_id} for Preset: {e}")
 
     return data
@@ -67,6 +74,7 @@ def check_space_exists(space_id):
 
 # --- GET All Presets ---
 @preset_bp.route('/presets', methods=['GET'])
+@jwt_required()
 def get_presets():
     """Retrieves all presets from the database and returns them as a list of dictionaries."""
     all_presets = Preset.query.all()
@@ -76,6 +84,7 @@ def get_presets():
 
 # --- GET Preset by ID ---
 @preset_bp.route('/presets/<string:preset_id>', methods=['GET'])
+@jwt_required()
 def get_preset_by_id(preset_id):
     """Retrieves a single preset by its ID."""
     preset = Preset.query.get(preset_id)
@@ -87,6 +96,7 @@ def get_preset_by_id(preset_id):
 
 # --- POST (Create) a New Preset ---
 @preset_bp.route('/presets', methods=['POST'])
+@jwt_required()
 def create_preset():
     """Creates a new preset."""
     data = request.get_json()
@@ -123,6 +133,7 @@ def create_preset():
 
 # --- PUT/PATCH (Update) a Preset ---
 @preset_bp.route('/presets/<string:preset_id>', methods=['PUT', 'PATCH'])
+@jwt_required()
 def update_preset(preset_id):
     """Updates an existing preset by ID."""
     preset = Preset.query.get(preset_id)
@@ -155,6 +166,7 @@ def update_preset(preset_id):
 
 # --- DELETE a Preset ---
 @preset_bp.route('/presets/<string:preset_id>', methods=['DELETE'])
+@jwt_required()
 def delete_preset(preset_id):
     """Deletes a preset by ID."""
     preset = Preset.query.get(preset_id)

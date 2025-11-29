@@ -1,4 +1,5 @@
 from flask import Blueprint , jsonify , request
+from flask_jwt_extended import jwt_required , get_jwt_identity , create_access_token , create_refresh_token
 from models import Company , db
 import logging
 import datetime
@@ -14,6 +15,7 @@ def generate_uuid():
 
 # --- POST create a new company ---
 @companies_bp.route('/companies' , methods = ['POST'])
+@jwt_required()
 def create_company():
     data = request.json
     try:
@@ -42,6 +44,7 @@ def create_company():
     
 # --- GET all companies ---
 @companies_bp.route('/companies' , methods = ['GET'])
+@jwt_required()
 def get_all_companies():
     try:
         companies = Company.query.all()
@@ -62,6 +65,7 @@ def get_all_companies():
     
 # --- GET single company by id ---
 @companies_bp.route('/companies/<string:company_id>' , methods = ['GET'])
+@jwt_required()
 def get_company_by_id(company_id):
     try:
         company = Company.query.get_or_404(company_id)
@@ -79,6 +83,7 @@ def get_company_by_id(company_id):
     
 # --- PUT (update) an existing company ---
 @companies_bp.route('/companies/<string:company_id>' , methods = ['PUT'])
+@jwt_required()
 def update_company(company_id):
     data = request.json
     company = Company.query.get_or_404(company_id)
@@ -109,6 +114,7 @@ def update_company(company_id):
     
 # --- DELETE a company ---
 @companies_bp.route('/companies/<string:company_id>' , methods = ['DELETE'])
+@jwt_required()
 def delete_company(company_id):
     company = Company.query.get_or_404(company_id)
     try:
@@ -121,6 +127,7 @@ def delete_company(company_id):
     
 #---GET companies by name ---
 @companies_bp.route('/companies/search' , methods = ['GET'])
+@jwt_required()
 def get_companies_by_name():
     name_query = request.args.get('name' , '')
     try:

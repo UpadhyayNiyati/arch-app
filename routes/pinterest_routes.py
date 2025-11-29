@@ -1,379 +1,405 @@
-import requests
-from flask import Flask, request, session, redirect, url_for, abort,jsonify
-# from . import REFRESH_TOKEN_SECRET, decode_jwt_custom, generate_uuid, logging
+"""
+pinterest_blueprint.py
+Flask blueprint to handle Pinterest OAuth v5 token exchange, refresh, and a simple "me" endpoint.
+
+Assumptions:
+- You have Flask, Flask-Login, SQLAlchemy installed and configured.
+- Environment variables set: PINTEREST_CLIENT_ID, PINTEREST_CLIENT_SECRET, PINTEREST_REDIRECT_URI
+- models.py defines `db` and `Pinterest` model (see comment below for expected fields).
+"""
+
 import os
-import json
-from dotenv import load_dotenv
-import secrets
-from models import User , db , Pinterest 
-import base64
-from datetime import datetime, timedelta
-from flask import Blueprint
-import logging 
-from flask_login import current_user
 import uuid
-from flask_jwt_extended import jwt_required, get_jwt_identity , decode_jwt_custom , generate_jwt_custom
+import base64
+import logging
+from datetime import datetime, timedelta
+from urllib.parse import urlencode
+from flask_login import LoginManager
+import requests
+from flask import Blueprint, request, jsonify, redirect, url_for, session, current_app
+from flask_login import current_user, login_required
+from flask import Blueprint, request, jsonify, redirect, url_for, session, current_app
 
-def generate_uuid():
-    return str(uuid.uuid4())
+# Import your application's db and Pinterest model
+# from models import db, Pinterest
+# Expected Pinterest model fields (example):
+# class Pinterest(db.Model):
+#     __tablename__ = "pinterest_tokens"
+#     id = db.Column(db.Integer, primary_key=True)
+#     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, unique=True)
+#     access_token = db.Column(db.Text, nullable=False)
+#     refresh_token = db.Column(db.Text, nullable=True)
+#     expires_at = db.Column(db.DateTime, nullable=True)  # UTC datetime when access token expires
+#     scopes = db.Column(db.String(512), nullable=True)
+#     token_type = db.Column(db.String(64), nullable=True)
+#     pinterest_account_id = db.Column(db.String(128), nullable=True)
 
-load_dotenv()
-
-
-pinterest_bp = Blueprint('pinterest', __name__)
+# If you use a different model / column names, adapt the code below.
 
 logger = logging.getLogger(__name__)
+pinterest_bp = Blueprint("pinterest", __name__)
 
-TOKEN_URL = os.getenv("TOKEN_URI")
-PINTEREST_CLIENT_ID = os.getenv("CLIENT_ID")
-PINTEREST_CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+
+
+# Config / env (do not hardcode in code; set environment variables in production)
+TOKEN_URL = os.getenv("TOKEN_URI", "https://api.pinterest.com/v5/oauth/token")
+PINTEREST_CLIENT_ID = os.getenv("PINTEREST_CLIENT_ID")
+PINTEREST_CLIENT_SECRET = os.getenv("PINTEREST_CLIENT_SECRET")
 PINTEREST_REDIRECT_URI = os.getenv("REDIRECT_URI")
-REFRESH_TOKEN_SECRET = os.getenv("REFRESH_TOKEN_SECRET")
 
-@pinterest_bp.route('/pinterest_login', methods=['POST'])
-def handle_pinterest_token_exchange():
+# Basic sanity check
+if not all([PINTEREST_CLIENT_ID, PINTEREST_CLIENT_SECRET, PINTEREST_REDIRECT_URI]):
+    logger.error("Missing Pinterest config: PINTEREST_CLIENT_ID / PINTEREST_CLIENT_SECRET / PINTEREST_REDIRECT_URI")
+
+# Helper: build auth header for Basic (client_id:client_secret)
+def _basic_auth_header(client_id: str, client_secret: str) -> dict:
+    raw = f"{client_id}:{client_secret}".encode("utf-8")
+    encoded = base64.b64encode(raw).decode("utf-8")
+    return {"Authorization": f"Basic {encoded}"}
+# login_manager = LoginManager()
+# login_manager.init_app(app)
+
+
+
+# ---------------------------
+# 1) Start Pinterest OAuth
+# ---------------------------
+@pinterest_bp.route("/pinterest/start", methods=["GET"])
+# @login_required
+def start_pinterest_login():
     """
-    Simulates the exchange of an Authorization Code for Pinterest Access/Refresh Tokens
-    and stores them in the User model.
+    Initiate OAuth flow:
+    - Store state and the initiating user ID in session
+    - Redirect to Pinterest authorization URL
     """
-    data = request.json
-    user_id = data.get('user_id')
-    
-    # ⚠️ These tokens would typically come from a Pinterest OAuth server exchange,
-    # along with the expiration time. This is simulated for demonstration.
-    pinterest_access_token = data.get('pinterest_access_token')
-    pinterest_refresh_token = data.get('pinterest_refresh_token')
-    
-    # Pinterest access tokens often expire after a short time (e.g., 24 hours).
-    # Refresh tokens typically last longer (e.g., 1 year).
-    ACCESS_EXPIRY_PINTEREST = timedelta(hours=24) 
-    
-    if not all([user_id, pinterest_access_token, pinterest_refresh_token]):
-        return jsonify({"message": "Missing required Pinterest token data."}), 400
+    # Create and store state to validate on callback (CSRF protection)
+    state = str(uuid.uuid4())
+    session["pinterest_oauth_state"] = state
+    # Also store which app user started the flow
+    session["pinterest_auth_user_id"] = "40e03e23-27fb-47db-ab65-cff79891ec47"
 
-    user = User.query.get(user_id)
-    if not user:
-        return jsonify({"message": "User not found."}), 404
-
-    try:
-        # Store Pinterest tokens and their expiry in the User model
-        user.pinterest_access_token = pinterest_access_token
-        user.pinterest_refresh_token = pinterest_refresh_token
-        user.pinterest_token_expires_at = datetime.utcnow() + ACCESS_EXPIRY_PINTEREST
-        
-        # NOTE: You should also add a field to the User model to track 
-        # when the Pinterest refresh token itself expires, if provided by Pinterest.
-
-        db.session.commit()
-        
-        return jsonify({
-            "message": "Pinterest tokens successfully stored.",
-            "pinterest_access_token_expiry": user.pinterest_token_expires_at.isoformat()
-        }), 200
-
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error storing Pinterest tokens: {e}")
-        return jsonify({"error": str(e)}), 500
-
-def refresh_pinterest_token(user_id):
-    """
-    Simulates sending the Pinterest Refresh Token to the Pinterest API 
-    to get a new Access Token.
-    """
-    user = User.query.get(user_id)
-    if not user or not user.pinterest_refresh_token:
-        return None # User has no Pinterest session
-        
-    # ⚠️ In a real app, this would involve an HTTP request to Pinterest's token endpoint.
-    # The new tokens and expiry would be returned and updated in the database.
-    
-    try:
-        # SIMULATION:
-        new_access_token = "new_pinterest_access_token_" + str(uuid.uuid4())
-        new_expiry = datetime.utcnow() + timedelta(hours=24)
-        
-        user.pinterest_access_token = new_access_token
-        user.pinterest_token_expires_at = new_expiry
-        db.session.commit()
-        
-        return new_access_token
-        
-    except Exception as e:
-        logger.error(f"Failed to refresh Pinterest token for user {user_id}: {e}")
-        db.session.rollback()
-        return None
-    
-
-@pinterest_bp.route('/pinterest/callback', methods=['GET'])
-def pinterest_oauth_callback():
-    # 1. Get the Authorization Code and User ID
-    auth_code = request.args.get('code')
-    user_id = session.get('user_id') 
-
-    if not auth_code or not user_id:
-        # Note: 'error_page' must be a defined route/function
-        return redirect(url_for('error_page'))
-
-    # Check for critical configuration variables
-    if not PINTEREST_CLIENT_ID or not PINTEREST_CLIENT_SECRET:
-        print("Error: Pinterest client credentials not loaded from environment.")
-        return redirect(url_for('error_page'))
-
-    # 2. Exchange the Code for Tokens
-    token_url = TOKEN_URL
-    
-    # --- CORRECTLY CONSTRUCTING THE AUTHORIZATION HEADER ---
-    auth_string = f"{PINTEREST_CLIENT_ID}:{PINTEREST_CLIENT_SECRET}".encode('utf-8')
-    encoded_auth = base64.b64encode(auth_string).decode('utf-8')
-    
-    headers = {
-        # This is the required Basic Authentication format: 'Basic <base64(client_id:client_secret)>'
-        "Authorization": f"Basic {encoded_auth}", 
-        "Content-Type": "application/x-www-form-urlencoded"
+    params = {
+        "response_type": "code",
+        "client_id": PINTEREST_CLIENT_ID,
+        "redirect_uri": PINTEREST_REDIRECT_URI,
+        # NOTE: Only request the scopes you truly need
+        "scope": "ads:read,pins:read,boards:read",
+        "state": state,
     }
+    auth_url = f"https://www.pinterest.com/oauth/?{urlencode(params)}"
     
-    data = { # This is the request payload
-        "grant_type": "authorization_code",
-        "code": auth_code,
-        "redirect_uri": PINTEREST_REDIRECT_URI, # Use the global config variable
-    }
-
-    token_response = requests.post(token_url, headers=headers, data=data)
-
-    # CHECK FOR SUCCESS AND GET THE RESPONSE DATA
-    if token_response.status_code != 200:
-        print(f"Token exchange failed (HTTP {token_response.status_code}): {token_response.text}")
-        return redirect(url_for('error_page'))
-    
-    # Store the successful JSON response
-    token_data = token_response.json()
-
-    try:
-        # Extract token details using .get() for safety where applicable
-        access_token = token_data.get('access_token')
-        refresh_token = token_data.get('refresh_token') # Refresh token may be optional/missing if not requested
-        expires_in_seconds = token_data.get('expires_in', 0) # Use 0 as default if missing
-        scopes = token_data.get('scope', '') 
-        token_type = token_data.get('token_type')
-
-        # Check for mandatory keys
-        if not access_token or not token_type:
-             raise ValueError("Required token data (access_token or token_type) missing in response.")
-
-        # 3. Calculate the Actual Expiration Datetime
-        expiration_datetime = datetime.utcnow() + timedelta(seconds=expires_in_seconds)
-
-        # 4. Save to Database 
-        # (Assuming 'Pinterest' model and 'db' are available in this scope)
-        pinterest_record = Pinterest.query.filter_by(user_id=user_id).first()
-
-        if pinterest_record:
-            # Update existing record
-            pinterest_record.access_token = access_token
-            pinterest_record.refresh_token = refresh_token
-            pinterest_record.expires_in = expiration_datetime
-            pinterest_record.scopes = scopes
-            pinterest_record.token_type = token_type
-        else:
-            # Create new record
-            new_pinterest_record = Pinterest(
-                user_id=user_id,
-                access_token=access_token,
-                refresh_token=refresh_token,
-                expires_in=expiration_datetime,
-                scopes=scopes,
-                token_type=token_type
-            )
-            db.session.add(new_pinterest_record)
-
-        db.session.commit()
-
-        # 5. Finish
-        # Note: 'success_page' must be a defined route/function
-        return redirect(url_for('success_page'))
-
-    except Exception as e:
-        # Handle API or DB errors
-        print(f"Error during Pinterest callback processing: {e}")
-        # Only rollback if db.session is available/in use
-        if 'db' in globals() or 'db' in locals():
-            db.session.rollback() 
-        return redirect(url_for('error_page'))
+    return redirect(auth_url)
 
 
-@pinterest_bp.route("/save-pinterest-tokens", methods=["POST"])
-def save_pinterest_tokens():
-    data = request.get_json()
-    
-    user_id = data.get("user_id")
-    access_token = data.get("access_token")
-    refresh_token = data.get("refresh_token")
-    expires_in = data.get("expires_in")
-
-    token_entry = Pinterest(
-        user_id=user_id,
-        access_token=access_token,
-        refresh_token=refresh_token,
-        expires_in=expires_in
-    )
-
-    db.session.add(token_entry)
-    db.session.commit()
-
-    return jsonify({"message": "Tokens saved successfully"}), 201
-
-import requests
-from datetime import datetime, timedelta
-import os
-
-# Assume your models.py defines PinterestTokens and db correctly
-# from models import PinterestTokens, db 
-
-# Define the Pinterest token endpoint
-PINTEREST_TOKEN_URL = TOKEN_URL
-CLIENT_ID = os.getenv("PINTEREST_CLIENT_ID")
-CLIENT_SECRET = os.getenv("PINTEREST_CLIENT_SECRET")
-
-# --- NEW FUNCTION TO REFRESH TOKEN PROGRAMMATICALLY ---
-def refresh_pinterest_token(token_entry: Pinterest):
+# ---------------------------
+# 2) OAuth Callback
+# ---------------------------
+@pinterest_bp.route("/pinterest/callback", methods=["GET"])
+def pinterest_callback():
     """
-    Exchanges an expired refresh token for a new access token and refresh token pair.
-    Updates the PinterestTokens entry in the database.
+    Pinterest will redirect here with ?code=...&state=...
+    Exchange code for tokens and persist them.
     """
-    try:
-        # 1. Prepare the request data
-        payload = {
-            "grant_type": "refresh_token",
-            "refresh_token": token_entry.refresh_token,
-            "scope": "ads:read,pins:read,boards:read" # Use the scopes granted during initial login
-        }
-        
-        # 2. Set Basic Auth headers
-        auth = (CLIENT_ID, CLIENT_SECRET)
-        
-        # 3. Make the API call to Pinterest
-        response = requests.post(PINTEREST_TOKEN_URL, data=payload, auth=auth)
-        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-
-        new_tokens = response.json()
-
-        # 4. Update the database entry with the new tokens and expiration time
-        token_entry.access_token = new_tokens["access_token"]
-        token_entry.refresh_token = new_tokens["refresh_token"]
-        token_entry.expires_in = new_tokens["expires_in"]
-        # Optional: Calculate and save the absolute expiry time for easier checks
-        # token_entry.expiry_time = datetime.utcnow() + timedelta(seconds=new_tokens["expires_in"]) 
-        
-        db.session.commit()
-        return True, token_entry.access_token
-
-    except requests.exceptions.RequestException as e:
-        print(f"Pinterest Token Refresh Failed: {e}")
-        db.session.rollback()
-        # In a real app, you might flag the user's token as invalid and require re-auth
-        return False, None
-    except Exception as e:
-        print(f"Unexpected error during token refresh: {e}")
-        db.session.rollback()
-        return False, None
-
-# --- Example of how to use it in a protected route (e.g., getting user info) ---
-
-@pinterest_bp.route("/pinterest/me", methods=["GET"])
-def get_pinterest_user_info():
-    # 1. Retrieve the user's token record (e.g., based on the authenticated user's ID)
-    user_id = request.args.get("user_id") # Replace with actual authentication logic
-    token_entry = Pinterest.query.filter_by(user_id=user_id).first()
-
-    if not token_entry:
-        return jsonify({"message": "User not linked to Pinterest"}), 404
-        
-    # **2. Token Check and Refresh Logic (Simplified Check)**
-    # A real check would use a saved expiry time (expiry_time) to be accurate.
-    # Here, we just assume we need to refresh (for demonstration purposes).
+    from models import db, Pinterest  # imported here to avoid circular import at module load
     
-    # In production, check if the token is near expiration (e.g., within 5 minutes) 
-    # OR if an API call fails with a 401 Unauthorized error.
-    
-    access_token = token_entry.access_token
-
-    # We will simulate a refresh attempt here:
-    # Check if the token is old (or use an explicit expiry time check)
-    if True: # Replace with check: if token_entry.is_expired():
-        success, new_token = refresh_pinterest_token(token_entry)
-        if not success:
-            return jsonify({"message": "Token refresh failed. Please re-authenticate."}), 401
-        access_token = new_token
-        
-    # 3. Use the valid access token for the actual Pinterest API call
-    headers = {"Authorization": f"Bearer {access_token}"}
-    pinterest_api_url = TOKEN_URL
-    
-    try:
-        api_response = requests.get(pinterest_api_url, headers=headers)
-        api_response.raise_for_status()
-        return jsonify(api_response.json()), 200
-    except requests.exceptions.RequestException as e:
-        return jsonify({"message": f"Pinterest API error: {e}"}), 500
-    
-
-#=====================ACCESS TOKEN======================
-@pinterest_bp.route("/pinterest/auth", methods=["POST"])
-def pinterest_auth():
-    data = request.json
-    code = data.get("code")
+    code = request.args.get("code")
+    state = request.args.get("state")
+    user_id = session.pop("pinterest_auth_user_id", None)
+    saved_state = session.pop("pinterest_oauth_state", None)
 
     if not code:
-        return jsonify({"error": "Code not provided"}), 400
+        logger.error("Pinterest callback missing 'code' param")
+        return jsonify({"error": "Missing authorization code"}), 400
 
-    token_url = TOKEN_URL
+    # Validate state
+    if not state or state != saved_state:
+        logger.error("Invalid or missing OAuth state")
+        return jsonify({"error": "Invalid OAuth state"}), 400
+
+    if not user_id:
+        logger.error("No initiating user stored in session for Pinterest OAuth")
+        return jsonify({"error": "No user session found for this authorization flow"}), 400
+
+    # Prepare exchange request
+    headers = _basic_auth_header(PINTEREST_CLIENT_ID, PINTEREST_CLIENT_SECRET)
+    headers["Content-Type"] = "application/x-www-form-urlencoded"
 
     payload = {
         "grant_type": "authorization_code",
         "code": code,
         "redirect_uri": PINTEREST_REDIRECT_URI,
-        "client_id": PINTEREST_CLIENT_ID,
-        "client_secret": PINTEREST_CLIENT_SECRET,
     }
 
-    response = requests.post(token_url, json=payload)
-    tokens = response.json()
+    try:
+        resp = requests.post(TOKEN_URL, headers=headers, data=payload, timeout=10)
+        resp.raise_for_status()
+        token_data = resp.json()
+    except requests.RequestException as exc:
+        logger.exception("Failed to exchange code for tokens")
+        return jsonify({"error": "Token exchange failed", "details": str(exc)}), 502
 
-    if "access_token" not in tokens:
-        return jsonify({"error": "Failed to exchange code"}), 400
+    # Extract token info
+    access_token = token_data.get("access_token")
+    refresh_token = token_data.get("refresh_token")
+    expires_in = token_data.get("expires_in", None)  # seconds
+    scopes = token_data.get("scope", "")
+    token_type = token_data.get("token_type", "")
 
-    # Store into database
-    new_token = Pinterest(
-        user_id=current_user.id,
-        access_token=tokens["access_token"],
-        refresh_token=tokens.get("refresh_token")
-    )
-    db.session.add(new_token)
-    db.session.commit()
+    if not access_token:
+        logger.error("Token exchange succeeded but no access_token returned")
+        return jsonify({"error": "No access token returned from provider"}), 502
+
+    expires_at = None
+    if isinstance(expires_in, (int, float)):
+        expires_at = datetime.utcnow() + timedelta(seconds=int(expires_in))
+    else:
+        # If provider doesn't return expires_in, set a conservative expiry (1 hour)
+        expires_at = datetime.utcnow() + timedelta(seconds=3600)
+
+    # Try to fetch user account info (Pinterest account id)
+    pinterest_account_id = None
+    try:
+        profile_resp = requests.get(
+            "https://api.pinterest.com/v5/user_account",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10,
+        )
+        profile_resp.raise_for_status()
+        pinterest_account_id = profile_resp.json().get("id")
+    except requests.RequestException:
+        logger.warning("Could not fetch Pinterest user_account; continuing without pinterest_account_id")
+
+    # Save or update Pinterest record for the app user
+    try:
+        record = Pinterest.query.filter_by(user_id=user_id).first()
+        if record:
+            record.access_token = access_token
+            record.refresh_token = refresh_token or record.refresh_token
+            record.expires_at = expires_at
+            record.scopes = scopes
+            record.token_type = token_type
+            if pinterest_account_id:
+                record.pinterest_account_id = pinterest_account_id
+        else:
+            record = Pinterest(
+                user_id=user_id,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                expires_at=expires_at,
+                scopes=scopes,
+                token_type=token_type,
+                pinterest_account_id=pinterest_account_id,
+            )
+            db.session.add(record)
+
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        logger.exception("DB save failed for Pinterest tokens")
+        return jsonify({"error": "Failed to save tokens"}), 500
+
+    # Redirect or return JSON (choose depending on your app)
+    # Example: redirect to a client page that shows success
+    try:
+        return redirect(url_for("main.pinterest_success"))
+    except Exception:
+        # Fallback JSON response if the named route is not present
+        return jsonify({"message": "Pinterest linked successfully"}), 200
+
+
+# ---------------------------
+# 3) Token refresh helper
+# ---------------------------
+def refresh_pinterest_token(token_entry):
+    """
+    Given a Pinterest model instance with a refresh_token, attempt to refresh.
+    Returns (success: bool, new_access_token_or_none)
+    """
+    from models import db  # local import to avoid circulars
+
+    if not getattr(token_entry, "refresh_token", None):
+        logger.warning("No refresh token present for user %s", getattr(token_entry, "user_id", "<unknown>"))
+        return False, None
+
+    payload = {
+        "grant_type": "refresh_token",
+        "refresh_token": token_entry.refresh_token,
+        # scope may be optional; include if you want:
+        # "scope": token_entry.scopes or "ads:read,pins:read,boards:read",
+    }
+
+    # Pinterest allows basic auth (client_id/client_secret) or header — use tuple auth for requests
+    try:
+        resp = requests.post(TOKEN_URL, data=payload, auth=(PINTEREST_CLIENT_ID, PINTEREST_CLIENT_SECRET), timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.RequestException as exc:
+        logger.exception("Pinterest refresh token request failed")
+        return False, None
+
+    new_access = data.get("access_token")
+    if not new_access:
+        logger.error("Refresh token response did not include access_token")
+        return False, None
+
+    try:
+        token_entry.access_token = new_access
+        if data.get("refresh_token"):
+            token_entry.refresh_token = data.get("refresh_token")
+        expires_in = data.get("expires_in")
+        if isinstance(expires_in, (int, float)):
+            token_entry.expires_at = datetime.utcnow() + timedelta(seconds=int(expires_in))
+        else:
+            token_entry.expires_at = datetime.utcnow() + timedelta(seconds=3600)
+        db.session.commit()
+        return True, new_access
+    except Exception:
+        db.session.rollback()
+        logger.exception("Failed to update token entry after refresh")
+        return False, None
+
+
+# ---------------------------
+# 4) Protected endpoint: get Pinterest "me"
+
+# login_manager = LoginManager()
+# login_manager.init_app(app)
+# login_manager.login_view = "auth.login"
+
+# @login_manager.user_loader
+# def load_user(user_id):
+#     """Flask-Login: load user by ID stored in session."""
+#     return User.query.get(user_id)
+# ---------------------------
+@pinterest_bp.route("/pinterest/me", methods=["GET"])
+# @login_required
+def get_pinterest_me():
+    """
+    Fetch the Pinterest user account info for the current authenticated user.
+    Automatically refreshes the access token if it is near expiry.
+    """
+    from models import Pinterest  # local import
+
+    # user_id = current_user.id
+    user_id="40e03e23-27fb-47db-ab65-cff79891ec47"
+    token_entry = Pinterest.query.filter_by(user_id=user_id).first()
+
+    if not token_entry:
+        return jsonify({"error": "No Pinterest account linked. Please connect Pinterest."}), 404
+
+    access_token = token_entry.access_token
+
+    # If token is missing expiry or expired (give 5-minute buffer), try refresh
+    if not token_entry.expires_at or datetime.utcnow() >= (token_entry.expires_at - timedelta(minutes=5)):
+        success, new_token = refresh_pinterest_token(token_entry)
+        if not success:
+            return jsonify({"error": "Token refresh failed. Please re-authenticate with Pinterest."}), 401
+        access_token = new_token
+
+    try:
+        resp = requests.get("https://api.pinterest.com/v5/user_account", headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
+        resp.raise_for_status()
+        return jsonify(resp.json()), 200
+    except requests.RequestException as exc:
+        logger.exception("Pinterest API request failed")
+        return jsonify({"error": "Pinterest API request failed", "details": str(exc)}), 502
+
+
+# ---------------------------
+# 5) Manual exchange route (for testing)
+# ---------------------------
+@pinterest_bp.route("/pinterest/exchange_code_manual", methods=["POST"])
+@login_required
+def exchange_code_manual():
+    """
+    Exchange an authorization code for tokens using request JSON.
+    For testing/debugging: accepts {"code": "..."} in JSON and associates tokens with the logged-in user.
+    NOTE: This route requires the user to be logged in (no hardcoded user_id).
+    """
+    from models import db, Pinterest  # local import
+
+    payload = request.get_json() or {}
+    code = payload.get("code")
+
+    if not code:
+        return jsonify({"error": "Missing 'code' in request body"}), 400
+
+    user_id = current_user.id
+
+    headers = _basic_auth_header(PINTEREST_CLIENT_ID, PINTEREST_CLIENT_SECRET)
+    headers["Content-Type"] = "application/x-www-form-urlencoded"
+
+    data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": PINTEREST_REDIRECT_URI,
+    }
+
+    try:
+        resp = requests.post(TOKEN_URL, headers=headers, data=data, timeout=10)
+        resp.raise_for_status()
+        token_data = resp.json()
+    except requests.RequestException as exc:
+        logger.exception("Manual token exchange failed")
+        return jsonify({"error": "Token exchange failed", "details": str(exc)}), 502
+
+    access_token = token_data.get("access_token")
+    refresh_token = token_data.get("refresh_token")
+    expires_in = token_data.get("expires_in")
+    scopes = token_data.get("scope", "")
+    token_type = token_data.get("token_type", "")
+
+    if not access_token:
+        return jsonify({"error": "No access token returned"}), 502
+
+    expires_at = datetime.utcnow() + timedelta(seconds=int(expires_in)) if expires_in else datetime.utcnow() + timedelta(seconds=3600)
+
+    # Persist
+    try:
+        record = Pinterest.query.filter_by(user_id=user_id).first()
+        if record:
+            record.access_token = access_token
+            record.refresh_token = refresh_token or record.refresh_token
+            record.expires_at = expires_at
+            record.scopes = scopes
+            record.token_type = token_type
+        else:
+            new_rec = Pinterest(
+                user_id=user_id,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                expires_at=expires_at,
+                scopes=scopes,
+                token_type=token_type,
+            )
+            db.session.add(new_rec)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        logger.exception("Failed to save tokens (manual exchange)")
+        return jsonify({"error": "DB save failed"}), 500
 
     return jsonify({"message": "Tokens stored successfully"}), 200
 
 
-@pinterest_bp.route("/pinterest/refresh", methods=["POST"])
-def refresh_pinterest_token():
-    token_obj = Pinterest.query.filter_by(user_id=current_user.id).first()
+@pinterest_bp.route("/boards", methods=["GET"])
+@login_required
+def get_pinterest_boards():
+    from models import Pinterest
 
-    refresh_url = TOKEN_URL
+    token_entry = Pinterest.query.filter_by(user_id=current_user.id).first()
+    if not token_entry:
+        return jsonify({"error": "No Pinterest account linked"}), 404
 
-    payload = {
-        "grant_type": "refresh_token",
-        "refresh_token": token_obj.refresh_token,
-        "client_id": PINTEREST_CLIENT_ID,
-        "client_secret": PINTEREST_CLIENT_SECRET,
-    }
+    access_token = token_entry.access_token
 
-    response = requests.post(refresh_url, json=payload)
-    data = response.json()
+    url = "https://api.pinterest.com/v5/boards"
 
-    token_obj.access_token = data["access_token"]
-    db.session.commit()
-    
-    return jsonify({"message": "Token refreshed"}), 200
+    resp = requests.get(url, headers={
+        "Authorization": f"Bearer {access_token}"
+    })
 
+    if resp.status_code != 200:
+        return jsonify({"error": "Failed to fetch boards", "details": resp.text}), 400
 
+    return jsonify(resp.json())

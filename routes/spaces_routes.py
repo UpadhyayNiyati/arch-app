@@ -1,12 +1,14 @@
 from flask import Blueprint, request, jsonify, current_app
-from models import db, Spaces , Upload_Files , Drawings , Preset , Projects
+from models import db, Spaces , Upload_Files , Drawings , Preset , Projects ,  Tasks
 from .upload_files_routes import upload_space_files
 import logging
 import os
 from flask_cors import CORS
 from sqlalchemy.orm.exc import NoResultFound
+from flask_jwt_extended import jwt_required , get_jwt_identity , create_access_token , create_refresh_token
 import json
 from sqlalchemy import distinct, func
+from .user_routes import jwt_required_now , jwt_required , custom_jwt_required
 
 spaces_bp = Blueprint('Spaces' , __name__)
 CORS(spaces_bp)
@@ -39,6 +41,7 @@ def serialize_space(space):
     return space_dict
 
 @spaces_bp.route('/get/spaces', methods=['GET'])
+@jwt_required_now
 def get_all_spaces():
     """
     Retrieve All Spaces
@@ -82,6 +85,7 @@ def get_all_spaces():
     return jsonify(all_spaces),200
 
 @spaces_bp.route('/get/<string:space_id>', methods=['GET'])
+@jwt_required_now
 def get_space_by_id(space_id):
     """
     Get Space by ID
@@ -145,6 +149,7 @@ def get_space_by_id(space_id):
 
 
 @spaces_bp.route('/post', methods=['POST'])
+@jwt_required_now
 def create_space():
     """
     Create New Space
@@ -251,6 +256,7 @@ def create_space():
         return jsonify({"error": "Failed to create space"}), 500
     
 @spaces_bp.route('/update/<string:space_id>', methods=['PUT'])
+@jwt_required_now
 def update_space(space_id):
     """
     Update Space (Metadata and/or Files)
@@ -339,6 +345,7 @@ def update_space(space_id):
         return jsonify({"error": "Failed to update space"}), 500
     
 @spaces_bp.route('/delete/<string:space_id>', methods=['DELETE'])
+@jwt_required_now
 def delete_space(space_id):
     """
     Delete Space by ID
@@ -378,6 +385,7 @@ def delete_space(space_id):
         return jsonify({"error": "Failed to delete space", "details": str(e)}), 500
     
 @spaces_bp.route('/get/project/<string:project_id>', methods=['GET'])
+@jwt_required_now
 def get_spaces_by_project_id(project_id):
     """
     Retrieve All Spaces for a specific Project ID.
@@ -398,6 +406,7 @@ def get_spaces_by_project_id(project_id):
         return jsonify({"error": "Failed to retrieve data"}), 500
     
 @spaces_bp.route('/update/project/<string:project_id>', methods=['PUT'])
+@jwt_required_now
 def update_space_by_project_id_with_files(project_id):
     """
     Update a SINGLE Space within a Project ID. Requires space_id in form data.
@@ -452,53 +461,54 @@ def update_space_by_project_id_with_files(project_id):
         current_app.logger.error(f"Error updating space {space_id_to_update}: {e}")
         return jsonify({"error": "Failed to update space"}), 500
 
-@spaces_bp.route('/delete/project/<string:project_id>', methods=['DELETE'])
-def delete_spaces_by_project_id(project_id):
-    """
-    Delete ALL Spaces and associated files/drawings for a given Project ID.
-    This resolves Foreign Key Constraints by deleting children first.
-    """
-    try:
-        # 1. Find all spaces belonging to the project
-        spaces_to_delete = Spaces.query.filter_by(project_id=project_id).all()
+# @spaces_bp.route('/delete/project/<string:project_id>', methods=['DELETE'])
+# @jwt_required_now
+# def delete_spaces_by_project_id(project_id):
+#     """
+#     Delete ALL Spaces and associated files/drawings for a given Project ID.
+#     This resolves Foreign Key Constraints by deleting children first.
+#     """
+#     try:
+#         # 1. Find all spaces belonging to the project
+#         spaces_to_delete = Spaces.query.filter_by(project_id=project_id).all()
         
-        if not spaces_to_delete:
-            return jsonify({"message": f"No spaces found for project ID {project_id} to delete"}), 404
+#         if not spaces_to_delete:
+#             return jsonify({"message": f"No spaces found for project ID {project_id} to delete"}), 404
         
-        deleted_count = 0
+#         deleted_count = 0
         
-        for space in spaces_to_delete:
-            space_id = space.space_id
+#         for space in spaces_to_delete:
+#             space_id = space.space_id
             
-            # 2. Delete all associated file records (Upload_Files and Drawings)
+#             # 2. Delete all associated file records (Upload_Files and Drawings)
             
-            # 2a. Delete Drawings (Child table)
-            drawings = Drawings.query.filter_by(space_id=space_id).all()
-            for drawing in drawings:
-                db.session.delete(drawing)
-                db.session.commit()
+#             # 2a. Delete Drawings (Child table)
+#             drawings = Drawings.query.filter_by(space_id=space_id).all()
+#             for drawing in drawings:
+#                 db.session.delete(drawing)
+#                 db.session.commit()
             
-            # 2b. Delete Upload_Files (Child table)
-            uploads = Upload_Files.query.filter_by(space_id=space_id).all()
-            for upload in uploads:
-                # TODO: Add logic here to delete the physical file from the file system (os.remove)
-                db.session.delete(upload)
-                db.session.commit()
+#             # 2b. Delete Upload_Files (Child table)
+#             uploads = Upload_Files.query.filter_by(space_id=space_id).all()
+#             for upload in uploads:
+#                 # TODO: Add logic here to delete the physical file from the file system (os.remove)
+#                 db.session.delete(upload)
+#                 db.session.commit()
             
-            # 3. Delete the parent Space record
-            db.session.delete(space)
-            deleted_count += 1
+#             # 3. Delete the parent Space record
+#             db.session.delete(space)
+#             deleted_count += 1
 
-        db.session.commit()
+#         db.session.commit()
         
-        return jsonify({
-            "message": f"Successfully deleted {deleted_count} spaces and associated records for project ID {project_id}"
-        }), 200 
+#         return jsonify({
+#             "message": f"Successfully deleted {deleted_count} spaces and associated records for project ID {project_id}"
+#         }), 200 
     
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"Error deleting spaces for project {project_id}: {e}")
-        return jsonify({"error": "Failed to delete spaces", "details": str(e)}), 
+#     except Exception as e:
+#         db.session.rollback()
+#         current_app.logger.error(f"Error deleting spaces for project {project_id}: {e}")
+#         return jsonify({"error": "Failed to delete spaces", "details": str(e)}), 
 
 # --- New Route in spaces_bp ---
 def serialize_space(space):
@@ -516,6 +526,7 @@ def serialize_space(space):
 
 
 @spaces_bp.route('/get/preset/<string:preset_id>', methods=['GET'])
+@jwt_required_now
 def get_spaces_by_preset_id(preset_id):
     """
     Retrieves all Space records associated with a specific Preset ID
@@ -557,6 +568,7 @@ def get_spaces_by_preset_id(preset_id):
 # --- New Route in spaces_bp ---
 
 @spaces_bp.route('/update/preset/<string:preset_id>', methods=['PUT', 'PATCH'])
+@jwt_required_now
 def update_space_by_preset_id(preset_id):
     """
     Updates the metadata of the single Space record associated with a specific Preset ID.
@@ -597,6 +609,7 @@ def update_space_by_preset_id(preset_id):
 # --- New Route in spaces_bp ---
 
 @spaces_bp.route('/delete/preset/<string:preset_id>', methods=['DELETE'])
+@jwt_required_now
 def delete_space_by_preset_id(preset_id):
     """
     Deletes the associated Space (and its files/drawings) AND the Preset itself.
@@ -630,10 +643,10 @@ def delete_space_by_preset_id(preset_id):
                 for upload in uploads:
                     # TODO: Add logic to delete the physical file
                     db.session.delete(upload)
+                    db.session.commit()
 
                 # Delete the parent Space record
                 db.session.delete(space)
-                
                 db.session.commit()
                 return jsonify({
                     "message": f"Preset {preset_id}, its associated Space {space_id}, and all related files/drawings deleted successfully."
@@ -656,6 +669,7 @@ def delete_space_by_preset_id(preset_id):
     
 
 @spaces_bp.route('/bulk', methods=['POST'])
+@jwt_required_now
 def create_spaces_bulk():
     data = request.get_json()
     spaces_list = data.get("spaces", [])
@@ -700,6 +714,7 @@ def create_spaces_bulk():
         return jsonify({"error": "Bulk creation failed"}), 500
     
 @spaces_bp.route('/spaces/duplicate', methods=['POST'])
+@jwt_required_now
 def duplicate_spaces_to_project():
     try:
         data = request.get_json()
@@ -736,6 +751,7 @@ def duplicate_spaces_to_project():
         return jsonify({"message": "Internal Server Error", "error": str(e)}), 500
 
 @spaces_bp.route('/spaces/apply-template', methods=['POST'])
+@jwt_required_now
 def apply_template_to_project():
     try:
         data = request.get_json()
@@ -794,52 +810,114 @@ def apply_template_to_project():
         # Ensure current_app.logger is imported/available if you use it, or just use print/logging
         return jsonify({"message": "Internal Server Error", "error": str(e)}), 500
 
-
-@spaces_bp.route("/apply-preset/<string:project_id>", methods=["POST"])
+@spaces_bp.route('/projects/<project_id>/apply-preset', methods=['POST'])
+@jwt_required_now
 def apply_preset_to_project(project_id):
+    data = request.get_json()
+    preset_id = data.get("preset_id")
+
+    if not preset_id:
+        return jsonify({"error": "preset_id is required"}), 400
+
+    # Fetch project
+    project = Projects.query.filter_by(project_id=project_id).first()
+    if not project:
+        return jsonify({"error": "Project not found"}), 404
+
+    # Fetch preset
+    preset = Preset.query.filter_by(preset_id=preset_id).first()
+    if not preset:
+        return jsonify({"error": "Preset not found"}), 404
+
+    # Apply preset to project
+    project.preset_id = preset_id
+
+    # Create a new space based on the preset
+    new_space = Spaces(
+        project_id=project.project_id,
+        preset_id=preset.preset_id,
+        space_name=preset.preset_name,              # you can customize this
+        description=preset.preset_description,      # optional
+        space_type=preset.preset_type,             # from preset_type
+        category="Preset"                           # categorize as preset-generated
+    )
+
+    db.session.add(new_space)
+    db.session.commit()
+
+    return jsonify({
+        "message": "Preset applied and space generated successfully",
+        "project_id": project_id,
+        "preset_id": preset_id,
+        "generated_space_id": new_space.space_id
+    }), 200
+
+
+@spaces_bp.route('/delete/project/<string:project_id>', methods=['DELETE'])
+@jwt_required_now
+def delete_spaces_by_project_id(project_id):
+    """
+    Delete ALL Spaces, and associated files/drawings for a given Project ID.
+    This resolves Foreign Key Constraints by deleting children first, and 
+    uses a single transaction for atomicity.
+    """
     try:
-        # Check if project exists
-        project = Projects.query.filter_by(project_id=project_id).first()
-        if not project:
-            return jsonify({"message": "Project not found"}), 404
+        # 1. Find all spaces belonging to the project
+        spaces_to_delete = Spaces.query.filter_by(project_id=project_id).all()
+        
+        if not spaces_to_delete:
+            return jsonify({"message": f"No spaces found for project ID {project_id} to delete"}), 404
+        
+        deleted_count = 0
+        
+        for space in spaces_to_delete:
+            space_id = space.space_id
+            
+            # --- START DELETION OF CHILDREN (Child -> Parent Order) ---
+            
+            # Find all Drawings belonging to this space
+            drawings_to_delete = Drawings.query.filter_by(space_id=space_id).all()
+            
+            # 2. Iterate through Drawings to delete their children (Upload_Files) first.
+            for drawing in drawings_to_delete:
+                drawing_id = drawing.drawing_id
 
-        # Project must have preset_id assigned
-        preset_id = project.preset_id
-        if not preset_id:
-            return jsonify({"message": "This project has no preset assigned"}), 400
+                # 2a. Delete Upload_Files (Child table referencing Drawings).
+                uploads = Upload_Files.query.filter_by(drawing_id=drawing_id).all()
+                for upload in uploads:
+                    # TODO: Add logic here to delete the physical file from the file system (os.remove)
+                    db.session.delete(upload)
+                    db.session.commit()
+                # 2b. Delete the parent Drawing record.
+                db.session.delete(drawing)
+                db.session.commit()
+                
+            # >>>>>> FIX IS ADDED HERE: Delete records from the 'tasks' table <<<<<<
+            # Note: Add deletion logic for any other tables that reference Space here (e.g., Tasks)
+            tasks_to_delete = Tasks.query.filter_by(space_id=space_id).all() # Assuming Tasks is your model
+            for task in tasks_to_delete:
+                db.session.delete(task)
+                db.session.commit()
+            
+            # 3. Delete the ultimate parent Space record
+            db.session.delete(space)
+            deleted_count += 1
+            db.session.commit()
 
-        # Fetch template spaces from PresetSpaces table
-        preset_spaces = Preset.query.filter_by(preset_id=preset_id).all()
-        if not preset_spaces:
-            return jsonify({"message": "No spaces found under this preset"}), 404
-
-        created_count = 0
-        created_names = []
-
-        # Create new space rows
-        for ps in preset_spaces:
-            new_space = Spaces(
-                project_id=project_id,
-                preset_id=preset_id,     # reference preset
-                space_name=ps.space_name,
-                description=ps.description,
-                space_type=ps.space_type,
-                category=ps.category
-            )
-
-            db.session.add(new_space)
-            created_count += 1
-            created_names.append(ps.space_name)
-
+        # 4. Commit all deletions at once (Single Transaction)
         db.session.commit()
-
+        
         return jsonify({
-            "message": "Preset applied successfully. Spaces created.",
-            "project_id": project_id,
-            "total_spaces_created": created_count,
-            "spaces": created_names
-        }), 201
-
+            "message": f"Successfully deleted {deleted_count} spaces and associated records for project ID {project_id}"
+        }), 200
+        
     except Exception as e:
+        # 5. Rollback on any error to ensure data integrity
         db.session.rollback()
-        return jsonify({"message": "Something went wrong", "error": str(e)}), 500
+        
+        print(f"Error deleting spaces for project {project_id}: {e}") 
+        
+        return jsonify({
+            "error": "Failed to delete spaces due to a database error.", 
+            "details": str(e)
+        }), 500

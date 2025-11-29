@@ -1,6 +1,6 @@
 from flask import Flask , jsonify , request
 #from architect_mngmnt_app.models import db
-from models import db
+from models import db , User
 from dotenv import load_dotenv
 from flask_jwt_extended import jwt_required , create_access_token , get_jwt_identity , JWTManager
 from datetime import datetime
@@ -8,8 +8,26 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
 from flasgger import Swagger
+from flask_login import LoginManager
 # from flask_bcrypt import Bcrypt 
 import os
+
+
+
+
+import time
+import datetime
+import platform
+import sys
+
+print("Python:", sys.version)
+print("Platform:", platform.platform())
+print("time.time() =", time.time())
+print("utcnow timestamp =", datetime.datetime.utcnow().timestamp())
+print("difference =", datetime.datetime.utcnow().timestamp() - time.time())
+
+
+
 
 # Load environment variables
 load_dotenv()
@@ -17,6 +35,18 @@ load_dotenv()
 app = Flask(__name__)
 # app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # app.config['ALLOWED_EXTENSIONS'] = ALLOWED_EXTENSIONS
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+# login_manager.login_view = "auth.login"
+login_manager.login_view = "user.login_user"
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
 
 app.config['SWAGGER'] = {
     'title': 'My Free Flask API Docs',
@@ -65,7 +95,7 @@ EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 
 
 #Add JWT Configuration
-app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY')
+app.config['SECRET_KEY'] = os.getenv('JWT_SECRET_KEY')
 jwt = JWTManager(app)
 
 db.init_app(app)
@@ -269,6 +299,8 @@ from routes.teams_routes import teams_bp
 # from routes.payments_routes import payments_bp
 from routes.invoices_routes import invoices_bp
 from routes.preset_routes import preset_bp
+from routes.pinterest_routes import pinterest_bp
+from auth.auth import auth_bp
 
 app.register_blueprint(teams_bp , url_prefix = "/api/teams")
 app.register_blueprint(roles_bp, url_prefix="/api/roles")
@@ -297,6 +329,8 @@ app.register_blueprint(cards_bp , url_prefix = '/api/cards')
 app.register_blueprint(companies_bp , url_prefix = '/api/companies')
 app.register_blueprint(super_user_bp , url_prefix = '/api/super_user')
 app.register_blueprint(preset_bp , url_prefix = '/api/preset')
+app.register_blueprint(pinterest_bp , url_prefix = '/api/pinterest')
+app.register_blueprint(auth_bp , url_prefix = '/api/auth')
 
 #create tables
 with app.app_context():
@@ -306,6 +340,8 @@ with app.app_context():
 
 
 print(os.path.exists("uploads/inspiration_uploads/2a59677d-b072-4570-925c-255a85efe195/Screenshot_2025-01-21_155435.png"))
+
+print(app.url_map)
 
 if __name__ == "__main__":
     app.run(debug = True)

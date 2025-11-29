@@ -6,7 +6,10 @@ import uuid
 import logging
 import json
 from flask_cors import CORS
-
+from .user_routes import custom_jwt_required , jwt_required_now , jwt_required
+import datetime
+import time
+from datetime import datetime , timedelta , time
 tasks_bp = Blueprint('tasks', __name__)
 CORS(tasks_bp)
 
@@ -48,10 +51,10 @@ def serialize_task(task):
         'description': task.description, 
         'assigned_to': assigned_user_name, 
         'status': task.status, 
-        'location': task.location, 
         'task_type': task.task_type,
-        'date': task.date.isoformat() if isinstance(task.date, datetime.date) else str(task.date),
-        'due_date': task.due_date.isoformat() if task.due_date and isinstance(task.due_date, datetime.date) else str(task.due_date) if task.due_date else None,
+        # 'date': task.date.isoformat() if isinstance(task.date, datetime.date) else str(task.date),
+        'date': task.date.isoformat() if task.date else None,
+        'due_date': task.due_date.isoformat()  if task.due_date else None,
         'space_id': getattr(task, 'space_id', None),
         'assigned_vendor': assigned_vendor_name,
         'completed_at': completed_at_iso, # Added for completeness
@@ -72,6 +75,7 @@ def serialize_task(task):
     return task_dict
 #get all tasks
 @tasks_bp.route('/tasks' , methods = ['GET'])
+# @jwt_required_now
 def get_all_tasks():
     """
     Retrieves all tasks along with their associated file metadata.
@@ -164,6 +168,7 @@ def get_all_tasks():
     
 #get single task by id
 @tasks_bp.route('/tasks/<string:task_id>' , methods = ['GET'])
+# @jwt_required_now
 def get_task_by_id(task_id):
     """
     Retrieve a single task by its unique ID.
@@ -273,6 +278,7 @@ def get_tasks_by_space_id(space_id):
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO) 
 @tasks_bp.route('/tasks' , methods = ['POST'])
+@jwt_required_now
 def add_tasks():
     """
     Create a new task, optionally including file attachments.
@@ -324,15 +330,42 @@ def add_tasks():
     for field in required_fields:
         if not data.get(field):
             return jsonify({'error': f"'{field}' is required"}), 400
+        
+    task_date_str = data.get('date')
+    task_date_to_save = None # Initialize to None
+
+    task_date_str = data.get('date')
+    task_date_to_save = None
+
+    if task_date_str:
+      try:
+        # **Case 1: Full Date-Time** (If input is like: 2025-12-12T15:30:00)
+        # We handle the 'T' and assume no timezone for simple cases
+        if 'T' in task_date_str:
+             # Strip off any timezone info (+HH:MM or Z) if not needed for the database
+             if '+' in task_date_str:
+                 task_date_str = task_date_str.split('+')[0]
+             elif task_date_str.endswith('Z'):
+                 task_date_str = task_date_str[:-1]
+
+             task_date_to_save = datetime.strptime(task_date_str, '%Y-%m-%dT%H:%M:%S')
+
+        # **Case 2: Date Only** (If input is like: 2025-12-12)
+        else:
+             task_date_to_save = datetime.strptime(task_date_str, '%Y-%m-%d')
+            
+      except ValueError as e:
+        logger.error("Error parsing date '%s': %s", task_date_str, str(e))
+        return jsonify({'error': "Invalid date format. Please use ISO 8601 format (e.g., 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM:SS')."}), 400
             
     # Validate project exists
+    assigned_user_id_to_save = None
+
     assigned_user_id = data.get('assigned_to')
     user = None
     if assigned_user_id: 
         # Note: Replace 'User' with your actual User model name if different
         user = User.query.filter_by(user_name=assigned_user_id).first()
-        
-        
         
         if not user and assigned_user_id.isalnum(): # Simple check if it looks like an ID/string without spaces
              user = User.query.get(assigned_user_id)
@@ -342,8 +375,6 @@ def add_tasks():
             }), 404
         
         assigned_user_id_to_save = user.user_id if user else None
-
-        
 
     # project = Projects.query.get(data.get('project_id'))
     # if not project:
@@ -372,7 +403,8 @@ def add_tasks():
             description = data.get('description'),
             status = data.get('status', 'pending'),
             task_type = data.get('task_type'),
-            date = data.get('date', datetime.datetime.utcnow()),
+            date = task_date_to_save, 
+            # task_date_to_save = None , 
             assigned_to = assigned_user_id_to_save,
             space_id = data.get('space_id'),
             location = data.get('location'),
@@ -387,7 +419,14 @@ def add_tasks():
         return jsonify({'message':'Task added successfully',
                         'task_id':new_task.task_id , 
                         'file_location' : f"Processed {len(attachments)} file(s)",
-                        'task_name':new_task.task_name
+                        'task_name':new_task.task_name ,
+                        'task_type':new_task.task_type , 
+                        'space_id':new_task.space_id , 
+                        'location' : new_task.location , 
+                        'status':new_task.status , 
+                        'description':new_task.description,
+                        'project_id':new_task.project_id , 
+                        'date' : task_date_to_save,
                         }) , 201
     except Exception as e:
         db.session.rollback()
@@ -429,6 +468,7 @@ def resolve_assigned_to_id(assigned_user_identifier):
     return user.user_id
 
 @tasks_bp.route('/tasks/<string:task_id>', methods=['PUT'])
+@jwt_required_now
 def update_task(task_id):
     """
     Update an existing task's metadata by its ID (using form-data) and handle files.
@@ -512,7 +552,7 @@ def update_task(task_id):
             if new_status_lower == 'completed':
                 # Set timestamp only if it wasn't already set (optional check)
                 if task.completed_at is None:
-                    task.completed_at = datetime.datetime.now()
+                    task.completed_at = datetime.now()
             elif task.completed_at is not None:
                 # Clear timestamp if status changes to non-completed
                 task.completed_at = None
@@ -893,6 +933,7 @@ def update_task(task_id):
 #         return jsonify({"error": str(e)}), 500
 
 @tasks_bp.route('/tasks/project/<string:project_id>' , methods = ['PUT'])
+@jwt_required_now
 def update_tasks_by_project_id(project_id):
     """
     Updates metadata for ALL tasks within a project_id. Optionally uploads files to a 
@@ -938,7 +979,7 @@ def update_tasks_by_project_id(project_id):
                         task.status = data['status']
                         # Handle completion timestamp for bulk status updates
                         if data['status'].lower() == 'completed':
-                            task.completed_at = datetime.datetime.now()
+                            task.completed_at = datetime.now()
                         elif task.completed_at is not None:
                             task.completed_at = None
                     else:
@@ -979,6 +1020,7 @@ def update_tasks_by_project_id(project_id):
         return jsonify({"error" : "An unexpected server or database error occurred during the update."}), 500
 
 @tasks_bp.route('/tasks/space/<string:space_id>' , methods = ['PUT'])
+@jwt_required_now
 def update_tasks_by_space_id(space_id):
     """
     Updates metadata for ALL tasks within a space_id. Optionally uploads files to a 
@@ -1025,7 +1067,7 @@ def update_tasks_by_space_id(space_id):
                         task.status = data['status']
                         # Handle completion timestamp for bulk status updates
                         if data['status'].lower() == 'completed':
-                            task.completed_at = datetime.datetime.now()
+                            task.completed_at = datetime.now()
                         elif task.completed_at is not None:
                             task.completed_at = None
                     else:
@@ -1453,6 +1495,7 @@ def update_tasks_by_space_id(space_id):
 
 #delete task by id
 @tasks_bp.route('/tasks/<string:task_id>' , methods = ['DELETE'])
+@jwt_required_now
 def delete_task(task_id):
     """
     Deletes a single task by its unique ID.
@@ -1485,6 +1528,7 @@ def delete_task(task_id):
         return jsonify({"error" : str(e)}) , 500
     
 @tasks_bp.route('/tasks/project/<string:project_id>' , methods = ['DELETE'])
+@jwt_required_now
 def delete_tasks_by_project_id(project_id):
     
     """
@@ -1547,6 +1591,7 @@ def delete_tasks_by_project_id(project_id):
         return jsonify({"error": "A database error occurred during deletion."}), 500
     
 @tasks_bp.route('/tasks/space/<string:space_id>' , methods = ['DELETE'])
+@jwt_required_now
 def delete_tasks_by_space_id(space_id):
     """
     Deletes all tasks and their associated file records belonging to the given space_id.
@@ -1592,6 +1637,7 @@ def delete_tasks_by_space_id(space_id):
     
 # --- PATCH Route to update vendor_id for a specific task ---
 @tasks_bp.route('/tasks/assign_vendor/<string:task_id>', methods=['PATCH'])
+@jwt_required_now
 def assign_vendor_to_task(task_id):
     data = request.json
     

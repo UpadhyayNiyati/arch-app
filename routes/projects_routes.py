@@ -4,13 +4,16 @@ import datetime
 import uuid
 from datetime import datetime, date # Import date for correct data type
 from flask_cors import CORS
-
+from flask_jwt_extended import  get_jwt_identity , create_access_token , create_refresh_token
+from auth.authhelpers import jwt_required
 
 projects_bp = Blueprint('projects', __name__)
+
 CORS(projects_bp)
 
 # --- GET all projects ---
 @projects_bp.route('/projects', methods=['GET'])
+@jwt_required
 def get_all_projects():
     try:
         # Fetch all projects from the database
@@ -49,6 +52,7 @@ def _serilalize_datetime(dt):
 
 # --- GET single project by id ---
 @projects_bp.route('/projects/<string:project_id>', methods=['GET'])
+@jwt_required
 def get_project_by_id(project_id):
     try:
         # Fetch the project by ID (404 if not found)
@@ -88,6 +92,7 @@ def get_project_by_id(project_id):
 
 # --- POST a new project ---
 @projects_bp.route('/projects', methods=['POST'])
+@jwt_required
 def add_projects():
     data = request.json
     # The required_fields list has been updated to include 'client_id'
@@ -136,6 +141,7 @@ def add_projects():
         
 # --- PUT (update) an existing project ---
 @projects_bp.route('/projects/<string:project_id>', methods=['PUT'])
+@jwt_required
 def update_project(project_id):
     data = request.json
     project = Projects.query.get_or_404(project_id)
@@ -168,6 +174,7 @@ def update_project(project_id):
         
 # --- DELETE a project ---
 @projects_bp.route('/projects/<string:project_id>', methods=['DELETE'])
+@jwt_required
 def delete_project(project_id):
     project = Projects.query.get_or_404(project_id)
     try:
@@ -180,6 +187,7 @@ def delete_project(project_id):
 # Assuming all other imports and code from your prompt are present
 
 @projects_bp.route('/projects/<string:project_id>', methods=['PATCH'])
+# @jwt_required
 def update_project_client(project_id):
     data = request.json
     
@@ -203,4 +211,51 @@ def update_project_client(project_id):
     
     except Exception as e:
         db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+    
+
+# --- GET all projects for a specific company by company_id ---
+@projects_bp.route('/companies/<string:company_id>/projects', methods=['GET'])
+# @jwt_required_now
+def get_projects_by_company(company_id):
+    try:
+        # 1. Query the Projects model, filtering by the provided company_id
+        # We assume the 'Companies' model exists and the ID is valid for simplicity.
+        projects = Projects.query.filter_by(company_id=company_id).all()
+
+        if not projects:
+            # You might return 404 if no projects are found for this ID, or 200 with an empty list
+            # A 200 with an empty list is often preferred for collection endpoints.
+            return jsonify({
+                'company_id': company_id,
+                'projects': [],
+                'total_projects': 0,
+                'message': 'No projects found for this company.'
+            }), 200
+
+        # 2. Serialize the projects
+        result = []
+        for project in projects:
+            result.append({
+                'project_id': project.project_id,
+                'project_name': project.project_name,
+                # Fetch related client's name (assuming the Client model is linked)
+                'client_name': project.client.client_name if project.client else None,
+                'location': project.location,
+                'due_date': project.due_date.isoformat() if project.due_date else None,
+                'status': project.status or 'Not Started',
+                'updated_at': project.updated_at.isoformat() if project.updated_at else None,
+                'company_id': project.company_id # Include the company_id for verification
+            })
+
+        # 3. Return the list of projects
+        return jsonify({
+            'company_id': company_id,
+            'projects': result,
+            'total_projects': len(result)
+        }), 200
+
+    except Exception as e:
+        # Log the error for debugging
+        print(f"Error fetching projects by company ID: {e}") 
         return jsonify({"error": str(e)}), 500

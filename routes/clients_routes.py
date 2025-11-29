@@ -1,6 +1,6 @@
 from flask import Blueprint , jsonify , request
 from models import Clients , db , Projects ,Tasks , Projectvendor , Vendors , OtpCode , User
-from flask_jwt_extended import JWTManager , create_access_token , get_jwt_identity 
+from flask_jwt_extended import JWTManager , create_access_token , get_jwt_identity  , jwt_required
 from werkzeug.security import generate_password_hash , check_password_hash
 from email.message import EmailMessage
 from datetime import datetime , timedelta , timezone
@@ -29,6 +29,7 @@ def send_email(recipients, subject, body):
 
 #get all clients
 @clients_bp.route('/get_clients', methods=['GET'])
+@jwt_required()
 def get_all_clients():
     """
     Retrieves a list of all clients.
@@ -84,6 +85,7 @@ def get_all_clients():
 
 #get single client by id
 @clients_bp.route('/get_one_clients/<string:client_id>' , methods = ['GET'])
+@jwt_required()
 def get_client_by_id(client_id):
     """
     Retrieves a single client by their ID.
@@ -137,6 +139,7 @@ def get_client_by_id(client_id):
     
 #post client
 @clients_bp.route('/post_client', methods=['POST'])
+@jwt_required()
 def add_client():
     """
     Adds a new client profile (requires a pre-existing user_id).
@@ -227,6 +230,7 @@ def add_client():
     
 
 @clients_bp.route('/update_client/<string:client_id>', methods=['PUT', 'PATCH'])
+@jwt_required()
 def update_client(client_id):
     """
     Updates client details based on the provided client_id (partial updates supported).
@@ -317,6 +321,7 @@ def update_client(client_id):
     
 #delete client
 @clients_bp.route('/del/client/<string:client_id>' , methods = ['DELETE'])
+@jwt_required()
 def del_client(client_id):
     """
     Deletes a client profile by ID.
@@ -348,6 +353,7 @@ def del_client(client_id):
 
 
 @clients_bp.route('/dashboard/<string:client_id>', methods=['GET'])
+@jwt_required()
 # @jwt_required() # You might want to protect this route with authentication
 def get_client_dashboard(client_id):
     """
@@ -751,6 +757,7 @@ def get_client_dashboard(client_id):
 
 
 @clients_bp.route('/register', methods=['POST'])
+@jwt_required()
 def register_client():
     """
     Registers a new client by creating linked records in the User, Clients, 
@@ -1001,6 +1008,7 @@ def register_client():
 #         return jsonify({"message": "Invalid email or password"}), 401
 
 @clients_bp.route('/login', methods=['POST'])
+@jwt_required()
 def login_client_profile():
     """
     First stage of client login: Authenticates credentials, cleans up old OTPs, 
@@ -1101,6 +1109,7 @@ def login_client_profile():
     
 
 @clients_bp.route('/verify_registration_otp', methods=['POST'])
+@jwt_required()
 def verify_client_registration_otp():
     """
     Verifies the registration OTP code provided by the client.
@@ -1208,6 +1217,7 @@ def verify_client_registration_otp():
 
 # --- NEW: OTP Verification for Client Login ---
 @clients_bp.route('/verify_login_otp', methods=['POST'])
+@jwt_required()
 def verify_client_login_otp():
     """
     Second stage of client login: Verifies the login OTP code.

@@ -12,24 +12,27 @@ import smtplib
 from flask_cors import CORS
 from flask_cors import cross_origin
 import logging
+from utils.email_utils import send_email
+from auth.auth import jwt_required
 
 vendors_bp = Blueprint('vendors', __name__)
 CORS(vendors_bp)
 
-def send_email(recipients, subject, body):
-    msg = EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = os.getenv('EMAIL_SENDER')
-    msg['To'] = ', '.join(recipients)
-    msg.set_content(body)
-    with smtplib.SMTP('smtp.gmail.com', 587) as smtp:
-        smtp.starttls()
-        smtp.login(os.getenv('EMAIL_SENDER'), os.getenv('EMAIL_PASSWORD'))
-        smtp.send_message(msg)
+# def send_email(recipients, subject, body):
+#     msg = EmailMessage()
+#     msg['Subject'] = subject
+#     msg['From'] = os.getenv('EMAIL_SENDER')
+#     msg['To'] = ', '.join(recipients)
+#     msg.set_content(body)
+#     with smtplib.SMTP('smtp.gmail.com', 587) as smtp:
+#         smtp.starttls()
+#         smtp.login(os.getenv('EMAIL_SENDER'), os.getenv('EMAIL_PASSWORD'))
+#         smtp.send_message(msg)
 
 
 # Add your route definitions here
 @vendors_bp.route('/vendors', methods=['POST'])
+@jwt_required
 def create_vendor():
     """
     Creates a new single vendor record (Global).
@@ -104,6 +107,7 @@ def create_vendor():
         return jsonify({'error': str(e)}), 500
     
 @vendors_bp.route('/vendors/post/space/<string:space_id>', methods=['POST'])
+@jwt_required
 def create_vendor_for_space(space_id):
     """
     Creates a new vendor associated with a specific space.
@@ -193,6 +197,7 @@ def create_vendor_for_space(space_id):
 
 #get all vendors    
 @vendors_bp.route('/vendors', methods=['GET'])
+@jwt_required
 def get_all_vendors():
     """
     Retrieves all vendors with pagination.
@@ -271,6 +276,7 @@ def get_all_vendors():
     
 #get single vendor by id
 @vendors_bp.route('/vendors/<string:vendor_id>', methods=['GET'])
+@jwt_required
 def get_vendor_by_id(vendor_id):
     """
     Retrieves a single vendor by its ID.
@@ -309,6 +315,7 @@ def get_vendor_by_id(vendor_id):
     return jsonify(result) , 200
 
 @vendors_bp.route('/vendors/space/<string:space_id>', methods=['GET'])
+@jwt_required
 def get_vendors_by_space_id(space_id):
     """
     Retrieves all vendors associated with a specific space_id.
@@ -363,6 +370,7 @@ def get_vendors_by_space_id(space_id):
 
 #update vendor by id
 @vendors_bp.route('/vendors/<string:vendor_id>', methods=['PUT'])
+@jwt_required
 @cross_origin()
 def update_vendor(vendor_id):
 
@@ -426,6 +434,7 @@ def update_vendor(vendor_id):
     return jsonify( response_data) , 200
 
 @vendors_bp.route('/vendors/space/<string:space_id>', methods=['PUT'])
+@jwt_required
 @cross_origin()
 def update_vendor_by_space_id(space_id):
     """
@@ -511,6 +520,7 @@ def update_vendor_by_space_id(space_id):
 
 #delete vendor by id
 @vendors_bp.route('/del_vendors/<string:vendor_id>' , methods = ['DELETE'])
+@jwt_required
 def delete_vendor(vendor_id):
     """
     Deletes a vendor by ID, including related Projectvendor entries.
@@ -543,6 +553,7 @@ def delete_vendor(vendor_id):
         return jsonify({"error": str(e)}), 500
 
 @vendors_bp.route('/vendors/space/<string:space_id>', methods=['DELETE'])
+@jwt_required
 def delete_vendor_by_space_id(space_id):
     """
     Deletes a vendor identified by vendor_id within a specific space.
@@ -604,351 +615,9 @@ def delete_vendor_by_space_id(space_id):
         # logger.error(f"Error deleting vendor ID {vendor_id} in space {space_id}: {e}", exc_info=True)
         return jsonify({"error": "An unexpected server error occurred."}), 500
 
-
-@vendors_bp.route('/register', methods=['POST'])
-def register_vendor():
-    """
-    Registers a new vendor and sends an OTP for verification.
-    ---
-    tags:
-      - Vendors - Auth & OTP
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          type: object
-          required: [company_name, contact_person, vendor_email, trade, vendor_password]
-          properties:
-            company_name: {type: string}
-            contact_person: {type: string}
-            vendor_email: {type: string, format: email}
-            trade: {type: string}
-            vendor_password: {type: string, format: password}
-    responses:
-      201:
-        description: Registration successful, check email for OTP.
-      400:
-        description: Missing required fields.
-      409:
-        description: Vendor with this email already exists.
-      500:
-        description: Internal server error (database or email issue).
-    """
-    data = request.json
-    required_fields = ['company_name', 'contact_person', 'vendor_email',  'vendor_password']
-
-    if not all(field in data for field in required_fields):
-        return jsonify({'error': 'All fields are required'}), 400
-
-    # 1. Check for existing vendor profile
-    existing_vendor = Vendors.query.filter_by(vendor_email=data['vendor_email']).first()
-    if existing_vendor:
-        return jsonify({"message": "A vendor with this email already exists"}), 409
-
-    try:
-        # Prepare data
-        hashed_password = generate_password_hash(data['vendor_password'])
-        
-        # 2. Start Transaction: Create the User account first (for login)
-        new_user = User(
-            user_email=data['vendor_email'],
-            user_password=hashed_password,
-            is_verified=False # Set to False, pending OTP verification
-        )
-        db.session.add(new_user)
-        
-        # KEY STEP: Execute INSERT for User to get the auto-generated user_id
-        db.session.flush()
-
-        # 3. Create the Vendor profile, linking it to the new user_id
-        new_vendor = Vendors(
-            company_name=data['company_name'],
-            contact_person=data['contact_person'],
-            vendor_email=data['vendor_email'],
-            # trade=data['trade'],
-            vendor_password=hashed_password, # Storing hash in vendor table per schema
-            user_id=new_user.user_id 
-        )
-        db.session.add(new_vendor)
-        
-        # 4. Generate Registration OTP
-        otp_code = str(random.randint(100000, 999999))
-        # Use timezone-aware UTC datetime
-        expires_at = datetime.now(timezone.utc) + timedelta(minutes=15) 
-        
-        new_otp = OtpCode(
-            user_id=new_user.user_id,
-            otp_code=otp_code,
-            expires_at=expires_at,
-            type='vendor_register' # OTP type for registration
-        )
-        db.session.add(new_otp)
-        
-        # Commit all records (User, Vendor, OTP) atomically
-        db.session.commit()
-        
-        # 5. Send Email
-        send_email(
-            recipients=[data['vendor_email']],
-            subject="Vendor Registration Verification",
-            body=f"Hello {data['contact_person']},\n\nYour registration verification code is {otp_code}. Please verify your account to log in."
-        )
-
-        return jsonify({"message": "Vendor registered successfully. Please verify your email via OTP."}), 201
-    
-    except Exception as e:
-        db.session.rollback()
-        print(f"Vendor registration error: {e}")
-        return jsonify({'error': 'An internal server error occurred during registration.'}), 500
-
-# =========================================================================
-# 2. NEW: VENDOR REGISTRATION VERIFICATION
-# =========================================================================
-@vendors_bp.route('/verify_register', methods=['POST'])
-def verify_register_vendor():
-    """
-    Verifies a newly registered vendor using the sent OTP code.
-    ---
-    tags:
-      - Vendors - Auth & OTP
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          type: object
-          required: [vendor_email, otp_code]
-          properties:
-            vendor_email: {type: string, format: email}
-            otp_code: {type: string}
-    responses:
-      200:
-        description: Registration verified successfully.
-      400:
-        description: Missing email or OTP code.
-      401:
-        description: Invalid, expired, or used OTP code.
-      404:
-        description: User not found.
-    """
-    data = request.json
-    user_email = data.get("vendor_email")
-    otp_code = data.get("otp_code")
-
-    if not all([user_email, otp_code]):
-        return jsonify({"message": "Email and OTP code are required"}), 400
-
-    user = User.query.filter_by(user_email=user_email).first()
-    if not user:
-        return jsonify({"message": "User not found"}), 404
-        
-    current_time_utc = datetime.now(timezone.utc)
-
-    # Find the valid, unused, unexpired OTP for registration
-    otp_record = OtpCode.query.filter(
-        OtpCode.user_id == user.user_id,
-        OtpCode.otp_code == otp_code,
-        OtpCode.expires_at > current_time_utc,
-        OtpCode.is_used == False,
-        OtpCode.type == 'vendor_register'
-    ).first()
-
-    if otp_record:
-        # Mark OTP as used and verify the user account
-        otp_record.is_used = True
-        user.is_verified = True # Set the verification flag
-        db.session.commit()
-        
-        return jsonify({"message": "Registration verified successfully. You can now log in."}), 200
-    else:
-        # Add detailed logging for debugging purposes
-        print(f"REG_VERIFY_FAILED: User {user.user_id}. Invalid, expired, or used OTP code for 'vendor_register'.")
-        return jsonify({"message": "Invalid, expired, or used OTP code."}), 401
-
-# =========================================================================
-# 3. NEW: VENDOR LOGIN (Password Check + OTP Generation)
-# =========================================================================
-@vendors_bp.route('/login', methods=['POST'])
-def login_vendor():
-    """
-    Authenticates vendor credentials and sends an OTP for 2FA login.
-    ---
-    tags:
-      - Vendors - Auth & OTP
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          type: object
-          required: [vendor_email, vendor_password]
-          properties:
-            vendor_email: {type: string, format: email}
-            vendor_password: {type: string, format: password}
-    responses:
-      200:
-        description: Credentials correct, OTP sent to email.
-      400:
-        description: Missing email or password.
-      401:
-        description: Invalid email or password.
-      403:
-        description: Account not verified.
-      500:
-        description: Internal server error during OTP generation/email send.
-    """
-    data = request.json
-    vendor_email = data.get("vendor_email")
-    vendor_password = data.get("vendor_password")
-    
-    if not all([vendor_email, vendor_password]):
-        return jsonify({"message": "Email and password are required"}), 400
-        
-    user_account = User.query.filter_by(user_email=vendor_email).first()
-    
-    # 1. Check if user account exists and password is correct
-    if user_account and check_password_hash(user_account.user_password, vendor_password):
-        
-        # 2. Check if the account is verified
-        if not user_account.is_verified:
-            return jsonify({"message": "Account not verified. Please verify your email first."}), 403
-
-        try:
-            # Delete old OTPs and generate new login OTP
-            OtpCode.query.filter_by(user_id=user_account.user_id).delete()
-            db.session.commit()
-            
-            otp_code = str(random.randint(100000, 999999))
-            expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
-            
-            new_otp = OtpCode(
-                user_id=user_account.user_id,
-                otp_code=otp_code,
-                expires_at=expires_at,
-                type='vendor_login' # OTP type for login
-            )
-            db.session.add(new_otp)
-            db.session.commit()
-            
-            # Fetch vendor name for email greeting
-            vendor_profile = Vendors.query.filter_by(user_id=user_account.user_id).first()
-            vendor_name_to_use = vendor_profile.contact_person if vendor_profile else "Vendor"
-            
-            send_email(
-                recipients=[vendor_email],
-                subject="Login Verification OTP",
-                body=f"Hello {vendor_name_to_use},\n\nYour login verification code is {otp_code}. It is valid for 5 minutes."
-            )
-            
-            return jsonify({"message": "OTP sent for login verification. Please check your email."}), 200
-        
-        except Exception as e:
-            db.session.rollback()
-            print(f"Login OTP generation error: {e}") 
-            return jsonify({"error": "An internal server error occurred during login."}), 500
-            
-    else:
-        # User not found OR password check failed
-        return jsonify({"message": "Invalid email or password"}), 401
-
-# =========================================================================
-# 4. NEW: VENDOR LOGIN VERIFICATION
-# =========================================================================
-@vendors_bp.route('/verify_login', methods=['POST'])
-def verify_login_vendor():
-    """
-    Verifies the login OTP and grants an access token upon success.
-    ---
-    tags:
-      - Vendors - Auth & OTP
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          type: object
-          required: [vendor_email, otp_code]
-          properties:
-            vendor_email: {type: string, format: email}
-            otp_code: {type: string}
-    responses:
-      200:
-        description: Login successful, returns access token.
-        schema:
-          type: object
-          properties:
-            message: {type: string}
-            access_token: {type: string}
-            user_id: {type: integer}
-      400:
-        description: Missing email or OTP code.
-      401:
-        description: Invalid, expired, or used OTP code.
-      404:
-        description: User not found.
-      500:
-        description: Internal server error during token generation or final commit.
-    """
-    data = request.json
-    user_email = data.get("vendor_email")
-    otp_code = data.get("otp_code")
-
-    if not all([user_email, otp_code]):
-        return jsonify({"message": "Email and OTP code are required"}), 400
-
-    user = User.query.filter_by(user_email=user_email).first()
-    if not user:
-        return jsonify({"message": "User not found"}), 404
-
-    current_time_utc = datetime.now(timezone.utc)
-
-    # Find the valid, unused, and unexpired OTP for this user and type
-    otp_record = OtpCode.query.filter(
-        OtpCode.user_id == user.user_id,
-        OtpCode.otp_code == otp_code,
-        OtpCode.expires_at > current_time_utc,
-        OtpCode.is_used == False,
-        OtpCode.type == 'vendor_login' # Must match login route's type
-    ).order_by(OtpCode.created_at.desc()).first()
-
-    if otp_record:
-        # Success path
-        try:
-            # Mark OTP as used
-            otp_record.is_used = True
-            db.session.commit()
-            
-            # Generate access token
-            access_token = create_access_token(identity=Vendors.vendor_id, expires_delta=timedelta(minutes=15))
-            # refresh_tokens = create_refresh_tokens(identity = Vendors.vendor_id , expires_delta = timedelta(days = 7))
-            
-            # Fetch vendor profile for name
-            vendor_profile = Vendors.query.filter_by(user_id=user.user_id).first()
-            vendor_name_to_use = vendor_profile.contact_person if vendor_profile else "Vendor"
-
-            # Send confirmation email
-            send_email(
-                recipients=[user_email],
-                subject="Successful Vendor Login",
-                body=f"Hello {vendor_name_to_use},\n\nYour login attempt at {current_time_utc.strftime('%Y-%m-%d %H:%M:%S')} (UTC) was successful."
-            )
-
-            return jsonify({
-                "message": "Login successful.",
-                "access_token": access_token,
-                "user_id": user.user_id
-            }), 200
-        except Exception as e:
-            db.session.rollback()
-            print(f"ERROR: Failed to finalize login (commit, token, or email): {e}")
-            return jsonify({"error": "Login successful, but token generation or email failed."}), 500
-            
-    else:
-        print(f"LOGIN_VERIFY_FAILED: User {user.user_id}. Invalid/expired/used OTP or type mismatch.")
-        return jsonify({"message": "Invalid, expired, or used OTP code."}), 401
     
 @vendors_bp.route('/patch/<string:vendor_id>' , methods = ['PATCH'])
+@jwt_required
 def patch_vendor(vendor_id):
     """
     Partially updates fields of an existing vendor by ID (PATCH).
@@ -1092,6 +761,7 @@ def patch_vendor(vendor_id):
 # MODIFIED: Search Vendor by Contact Number (Now supports partial/prefix search)
 # =========================================================================
 @vendors_bp.route('/vendors/search/contact_number', methods=['GET'])
+@jwt_required
 def search_vendor_by_contact_number():
     """
     Retrieves vendors by matching the starting digits (prefix) of their contact number.

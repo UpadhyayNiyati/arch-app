@@ -53,17 +53,27 @@ def jwt_required(f):
 
         token = auth_header.split(" ")[1]
         try:
-            payload = decode_jwt(token,ACCESS_TOKEN_SECRET)
+            payload = decode_jwt(token, ACCESS_TOKEN_SECRET)
+            
+            # Check for token validation errors
+            if 'message' in payload:
+                return jsonify({"error": payload['message']}), 401
+                
             user_id = payload.get("user_id")
+            company_id = payload.get("company_id")
+            
             if not user_id:
-                return jsonify({"message":"Unauthorized Token"}),401
+                return jsonify({"error": "Unauthorized Token"}), 401
+
+            # Set the user_id and company_id on the request object
+            request.current_user_id = user_id
+            request.current_company_id = company_id
 
         except Exception as e:
             return jsonify({"error": str(e)}), 401
 
         return f(*args, **kwargs)
     return decorated_function
-
 
 def get_auth_key_from_request(request):
     pass

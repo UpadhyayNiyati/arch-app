@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 from flask_login import LoginManager
 import requests
 from flask import Blueprint, request, jsonify, redirect, url_for, session, current_app
+from models import db, Pinterest
 from flask_login import current_user, login_required
 from flask import Blueprint, request, jsonify, redirect, url_for, session, current_app
 
@@ -272,16 +273,15 @@ def refresh_pinterest_token(token_entry):
 #     return User.query.get(user_id)
 # ---------------------------
 @pinterest_bp.route("/pinterest/me", methods=["GET"])
-# @login_required
 def get_pinterest_me():
     """
     Fetch the Pinterest user account info for the current authenticated user.
     Automatically refreshes the access token if it is near expiry.
     """
-    from models import Pinterest  # local import
+    if not current_user.is_authenticated:
+        return jsonify({"error": "User not authenticated"}), 401
 
-    # user_id = current_user.id
-    user_id="40e03e23-27fb-47db-ab65-cff79891ec47"
+    user_id = str(current_user.id)
     token_entry = Pinterest.query.filter_by(user_id=user_id).first()
 
     if not token_entry:
@@ -289,7 +289,7 @@ def get_pinterest_me():
 
     access_token = token_entry.access_token
 
-    # If token is missing expiry or expired (give 5-minute buffer), try refresh
+    # Refresh token if missing expiry or about to expire (5-minute buffer)
     if not token_entry.expires_at or datetime.utcnow() >= (token_entry.expires_at - timedelta(minutes=5)):
         success, new_token = refresh_pinterest_token(token_entry)
         if not success:
@@ -297,7 +297,11 @@ def get_pinterest_me():
         access_token = new_token
 
     try:
-        resp = requests.get("https://api.pinterest.com/v5/user_account", headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
+        resp = requests.get(
+            "https://api.pinterest.com/v5/user_account",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10
+        )
         resp.raise_for_status()
         return jsonify(resp.json()), 200
     except requests.RequestException as exc:
@@ -403,3 +407,36 @@ def get_pinterest_boards():
         return jsonify({"error": "Failed to fetch boards", "details": resp.text}), 400
 
     return jsonify(resp.json())
+
+
+@pinterest_bp.route("/auth/pinterest", methods=["POST"])
+def pinterest_auth():
+    if not request.is_json:
+        return jsonify({"error": "Content-Type must be application/json"}), 415
+
+    code = request.json.get("code")
+    if not code:
+        return jsonify({"error": "Missing code"}), 400
+
+    # Now send Form-URL-Encoded to Pinterest
+    token_url = "https://api.pinterest.com/v5/oauth/token"
+
+    payload = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": os.environ.get("PINTEREST_CLIENT_ID"),
+        "client_secret": os.environ.get("PINTEREST_CLIENT_SECRET"),
+        "redirect_uri": "https://yourapp.com/auth/pinterest/callback"
+    }
+
+    headers = { 
+        "Content-Type": "application/x-www-form-urlencoded" 
+    }
+
+    try:
+        resp = requests.post(token_url, data=payload, headers=headers)
+        resp.raise_for_status()
+        return jsonify(resp.json())
+    except Exception as e:
+        print(e)
+        return jsonify({"error": "An error occurred"}), 400

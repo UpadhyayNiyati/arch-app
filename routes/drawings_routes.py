@@ -7,6 +7,8 @@ from datetime import datetime , timedelta
 import os
 from flask_cors import CORS
 import json
+from utils.email_utils import send_email
+from auth.auth import jwt_required
 
 drawings_bp = Blueprint('drawings_bp', __name__)
 
@@ -16,7 +18,7 @@ logger = logging.getLogger(__name__)
 CORS(drawings_bp)
 # Route to get all drawings
 @drawings_bp.route('/get', methods=['GET'])
-# @jwt_required()
+@jwt_required
 def get_drawings():
     """
     Retrieves all drawings from the database, with their associated file details.
@@ -58,7 +60,7 @@ def get_drawings():
 
 
 @drawings_bp.route('/get/<string:drawing_id>', methods=['GET'])
-# @jwt_required()
+@jwt_required
 def get_drawing_by_id(drawing_id):
     """
     Retrieves a single drawing by ID from the database, with its associated file details.
@@ -109,7 +111,7 @@ def get_drawing_by_id(drawing_id):
         return jsonify({"error": "An unexpected error occurred."}), 500
     
 @drawings_bp.route('/update/drawing/<string:drawing_id>', methods=['PUT'])
-# @jwt_required()
+@jwt_required
 def update_drawing_by_id(drawing_id):
     """
     Updates a single drawing's metadata and files using only the drawing_id from the URL.
@@ -205,7 +207,7 @@ def update_drawing_by_id(drawing_id):
     
 
 @drawings_bp.route('/get/space/<string:space_id>', methods=['GET'])
-# @jwt_required()
+@jwt_required
 def get_drawings_by_space_id(space_id):
     """
     Retrieves ALL drawings associated with a specific space_id, with file details.
@@ -251,7 +253,7 @@ def get_drawings_by_space_id(space_id):
 
 
 @drawings_bp.route('/update/<string:space_id>', methods=['PUT'])
-# @jwt_required()
+@jwt_required
 def update_drawing_by_space_id_handler(space_id):
     """
     Updates a single drawing's metadata and files, identified by a drawing_id 
@@ -350,7 +352,7 @@ def update_drawing_by_space_id_handler(space_id):
     
 # Route to create a new drawing
 @drawings_bp.route('/post', methods=['POST'])
-# @jwt_required()
+@jwt_required
 def create_drawing():
     # space = Spaces.query.get(space_id)
     # if not space:
@@ -361,7 +363,7 @@ def create_drawing():
     # if not data or 'space_id' not in data or 'drawing_name' or 'description' not  in data:
         # return jsonify({"error": "Missing required fields"}), 400
 
-    required_fields = ['drawing_name', 'description']
+    required_fields = ['drawing_name']
     
     # Check if any required field is NOT present in data
     if any(field not in data for field in required_fields):
@@ -400,7 +402,7 @@ def create_drawing():
     
 # Route to delete a drawing
 @drawings_bp.route('/delete/<string:drawing_id>', methods=['DELETE'])
-# @jwt_required()
+@jwt_required
 def delete_drawing(drawing_id):
     """
     Deletes a drawing record from the database.
@@ -424,7 +426,7 @@ def delete_drawing(drawing_id):
     
 
 @drawings_bp.route('/update/<string:space_id>', methods=['PUT'])
-# @jwt_required()
+@jwt_required
 def update_drawing_by_space_id(space_id):
     """
     Updates a single drawing's metadata and files, identified by a drawing_id 
@@ -523,7 +525,7 @@ def update_drawing_by_space_id(space_id):
         return jsonify({"error": "Failed to update drawing or files"}), 500
 
 @drawings_bp.route('/delete/space/<string:space_id>', methods=['DELETE'])   
-# @jwt_required() 
+@jwt_required
 def delete_drawing_by_space_id(space_id):
     """
     Deletes a specific drawing record and its associated file records.

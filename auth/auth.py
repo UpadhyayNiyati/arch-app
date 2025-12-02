@@ -4,6 +4,8 @@ import logging
 from random import random
 import uuid
 import bcrypt
+from flask_cors import cross_origin
+import traceback
 from flask import Flask
 from flask_bcrypt import Bcrypt
 from flask import Blueprint, jsonify, request
@@ -11,11 +13,14 @@ from flask_mail import Mail
 from sqlalchemy import and_
 import random
 # from architect_backend0.routes.clients_routes import send_email
-from routes.clients_routes import send_email
+from utils.email_utils import send_email
+from email.message import EmailMessage
 from models import OtpCode, User, UserToken,db, generate_uuid
 # from werkzeug.security import generate_password_hash,check_password_hash
 from auth.authhelpers import  REFRESH_TOKEN_SECRET, create_access_token, create_refresh_token, decode_jwt,  jwt_required, refresh_token_expiry_time
 from werkzeug.exceptions import BadRequest
+from sqlalchemy import func
+import os
 from sqlalchemy.exc import SQLAlchemyError
 
 auth_bp = Blueprint('auth', __name__ ,url_prefix="/api/auth")
@@ -89,7 +94,7 @@ def login_user():
     if user and bcrypt.check_password_hash(user.user_password , user_password):
         try:
             OtpCode.query.filter_by(user_id = user.user_id).delete()
-            db.session.commit()
+            db.session.flush()
 
             #generate new otp
             otp_code = str(random.randint(100000 , 999999))
@@ -113,13 +118,11 @@ def login_user():
             return jsonify({"message": "OTP sent for login verification. Please check your email."}), 200
         
         except Exception as e:
+            db.session.rollback()
             return jsonify({"error" : str(e)}) , 500
     else:
         return jsonify({"message" : "Invalid email or password"}) , 401
     
-
-
-
 
 @auth_bp.route('/verify_login_otp', methods=['POST'])
 def verify_login_otp():
@@ -219,9 +222,6 @@ def verify_login_otp():
             failed_otp.attempts += 1
             db.session.commit()
         return jsonify({"message": "Invalid, expired, or used OTP code."}), 401
-
-
-
 
 
 @auth_bp.route("/refresh", methods=['GET', 'POST'])
@@ -330,3 +330,189 @@ def logout_user():
         db.session.rollback() 
         logging.error(f"Unexpected error during logout: {e}", exc_info=True)
         return jsonify({'message': 'An unexpected server error occurred.'}), 500
+    
+@auth_bp.route('/verify_registration_otp', methods=['POST'])
+def verify_registration_otp():
+    """
+    Verify Registration OTP (Step 2: OTP Verification & Final Login)
+    ---
+    tags:
+      - User Authentication
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          $ref: '#/definitions/OtpVerify'
+    responses:
+      200:
+        description: Registration complete and OTP verified. Returns access tokens.
+        schema:
+          $ref: '#/definitions/AuthResponse'
+      400:
+        description: Missing required fields.
+      401:
+        description: Invalid, expired, or used OTP code.
+      404:
+        description: User not found.
+    """
+    data = request.json
+    user_email = data.get("user_email")
+    otp_code = data.get("otp_code")
+
+    if not all([user_email, otp_code]):
+        return jsonify({"message": "Email and OTP code are required"}), 400
+
+    user = User.query.filter_by(user_email=user_email).first()
+    if not user:
+        return jsonify({"message": "User not found"}), 404
+
+    # Find the valid, unused, and unexpired OTP for this user and type
+    otp_record = OtpCode.query.filter(
+        OtpCode.user_id == user.user_id,
+        OtpCode.otp_code == otp_code,
+        OtpCode.expires_at > datetime.now(),
+        OtpCode.is_used == False,
+        OtpCode.type == 'registration'
+    ).order_by(OtpCode.created_at.desc()).first()
+
+    if otp_record:
+        # Mark OTP as used
+        otp_record.is_used = True
+        db.session.commit()
+        
+        company_id = user.company_id
+
+        # You might want to 'activate' the user here if you have an 'is_active' column
+        # user.is_active = True 
+        # db.session.commit()
+
+        # Generate access token
+        # access_token = create_access_token(identity=user.user_id, expires_delta=timedelta(minutes=15))
+        # refresh_token = create_refresh_token(identity=user.user_id , expires_delta = timedelta(days = 7))
+        access_token = create_access_token(user.user_id, company_id)     
+        refresh_token = create_refresh_token(user.user_id, company_id)
+        
+        # Send confirmation email
+        send_email(
+            recipients=[user_email],
+            subject="Registration Successful!",
+            body=f"Hello {user.user_name},\n\nYour account has been successfully verified and registered."
+        )
+
+        return jsonify({
+            "message": "Registration complete and OTP verified. Login successful.",
+            # "access_token": access_token,
+            # "refresh_token" : refresh_token,
+            "user_id": user.user_id
+        }), 200
+    else:
+        # Increment attempt counter (optional, for brute-force protection)
+        failed_otp = OtpCode.query.filter(
+            OtpCode.user_id == user.user_id,
+            OtpCode.otp_code == otp_code,
+            OtpCode.type == 'user_registration'
+        ).first()
+        if failed_otp:
+            failed_otp.attempts += 1
+            db.session.commit()
+            
+        return jsonify({"message": "Invalid, expired, or used OTP code."}), 401
+    
+access_token_expiry_time=timedelta(minutes=30)
+refresh_token_expiry_time=timedelta(days=7)
+
+ACCESS_TOKEN_SECRET=str(os.getenv('ACCESS_TOKEN_SECRET'))
+REFRESH_TOKEN_SECRET=str(os.getenv('REFRESH_TOKEN_SECRET'))
+
+
+#user registration route
+@auth_bp.route('/register' , methods = ['POST'])
+def register_user():
+    """
+    User Registration (Step 1: Create User & Send OTP)
+    ---
+    tags:
+      - User Authentication
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          $ref: '#/definitions/UserRegister'
+    responses:
+      201:
+        description: User registered. OTP sent to email.
+      400:
+        description: Missing required fields.
+      409:
+        description: User with this email already exists.
+      500:
+        description: Server error during registration or OTP generation/sending.
+    """
+    data = request.json
+    user_name = data.get("user_name")
+    user_email = data.get("user_email" , "").strip().lower()
+    # user_phone = data.get("user_phone")
+    # user_address = data.get("user_address")
+    user_password = data.get("user_password")
+
+    if not all([user_name, user_email, user_password]):
+        return jsonify({"message": "All fields are required"}), 400
+
+    existing_user = User.query.filter(func.lower(User.user_email) == user_email).first()
+    if existing_user:
+        return jsonify({"message": "User with this email already exists"}), 409
+
+    try:
+        # Hash the password
+        hashed_password = bcrypt.generate_password_hash(user_password).decode('utf-8')
+
+        new_user = User(
+            user_name=user_name,
+            user_email=user_email,
+            # user_phone=user_phone,
+            # user_address=user_address,
+            user_password=hashed_password
+        )
+        db.session.add(new_user)
+        db.session.flush()
+
+
+        otp_code = str(random.randint(100000, 999999))
+        expires_at = datetime.now() + timedelta(minutes = 5)
+        new_otp = OtpCode(
+            user_id=new_user.user_id,
+            otp_code=otp_code,
+            expires_at=expires_at,
+            type='registration'
+        )
+        db.session.add(new_otp)
+        db.session.commit()
+
+        # Send OTP via email
+        send_email(
+            recipients=[user_email],
+            subject="Your Registration OTP",
+            body=f"Hello {user_name},\n\nYour OTP code is {otp_code}. It is valid for 5 minutes."
+        )
+
+        return jsonify({"message": "User registered. Please check your email for the OTP."}), 201
+    except Exception as e:
+        db.session.rollback() 
+        return jsonify({"error" : str(e)}) , 500
+    
+
+@auth_bp.route('/user/protected' , methods = ['GET'])
+@jwt_required
+def protected_route():
+    # Access the claims directly from the request context!
+    return jsonify({
+        "message" : "You have access to this protected resource.", 
+        "user_id" : request.current_user_id,
+        "company_id": request.current_company_id
+    }) , 200
+
+
+
+

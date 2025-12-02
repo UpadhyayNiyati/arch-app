@@ -21,6 +21,7 @@ class User(db.Model):
     user_roles = db.relationship('UserRole', backref='user', lazy=True, cascade='all, delete-orphan')
     role_id = db.Column(db.String(64), db.ForeignKey('roles.role_id'), nullable=True)
     company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
+    is_active = db.Column(db.Boolean, default=True)
 
 
     team_memberships = db.relationship(
@@ -541,3 +542,19 @@ class Preset(db.Model):
     space_id = db.Column(db.String(50) , db.ForeignKey('spaces.space_id') , nullable = True)
     project_id = db.Column(db.String(50), db.ForeignKey("projects.project_id"))
 
+class Invite(db.Model):
+    __tablename__ = "invites"
+    invite_id = db.Column(db.String(50), primary_key=True, default=generate_uuid) 
+    email = db.Column(db.String(255), nullable=False, index=True)
+    company_id = db.Column(db.String(50), db.ForeignKey("companies.company_id"), nullable=True)
+    created_by_user_id = db.Column(db.String(50), db.ForeignKey("user.user_id"), nullable=True)
+    raw_token_id = db.Column(db.String(100), nullable=True)  # short id shown in link (optional)
+    token_hash = db.Column(db.String(128), nullable=False)  # hex of sha256(salt + raw_token)
+    salt = db.Column(db.String(32), nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    accepted = db.Column(db.Boolean, default=False)
+    accepted_by_user_id = db.Column(db.String(50), db.ForeignKey("user.user_id"), nullable=True)
+    accepted_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    single_use = db.Column(db.Boolean, default=True)
+    

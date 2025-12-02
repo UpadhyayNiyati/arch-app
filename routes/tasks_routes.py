@@ -5,8 +5,9 @@ from  .upload_files_routes import upload_task_files , update_task_files
 import uuid
 import logging
 import json
+from utils.email_utils import send_email
 from flask_cors import CORS
-from .user_routes import custom_jwt_required , jwt_required_now , jwt_required
+from auth.auth import jwt_required
 import datetime
 import time
 from datetime import datetime , timedelta , time
@@ -75,7 +76,7 @@ def serialize_task(task):
     return task_dict
 #get all tasks
 @tasks_bp.route('/tasks' , methods = ['GET'])
-# @jwt_required_now
+@jwt_required
 def get_all_tasks():
     """
     Retrieves all tasks along with their associated file metadata.
@@ -168,7 +169,7 @@ def get_all_tasks():
     
 #get single task by id
 @tasks_bp.route('/tasks/<string:task_id>' , methods = ['GET'])
-# @jwt_required_now
+@jwt_required
 def get_task_by_id(task_id):
     """
     Retrieve a single task by its unique ID.
@@ -218,6 +219,7 @@ def get_task_by_id(task_id):
 
 #Get tasks by project_id and space_id
 @tasks_bp.route('/tasks/project/<string:project_id>' , methods = ['GET'])
+@jwt_required
 def get_tasks_by_project_id(project_id):
     """
     Retrieve all tasks associated with a specific project ID.
@@ -249,6 +251,7 @@ def get_tasks_by_project_id(project_id):
 
 
 @tasks_bp.route('/tasks/space/<string:space_id>' , methods = ['GET'])
+@jwt_required
 def get_tasks_by_space_id(space_id):
     """
     Retrieve all tasks associated with a specific space ID.
@@ -278,7 +281,7 @@ def get_tasks_by_space_id(space_id):
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO) 
 @tasks_bp.route('/tasks' , methods = ['POST'])
-@jwt_required_now
+@jwt_required
 def add_tasks():
     """
     Create a new task, optionally including file attachments.
@@ -468,7 +471,7 @@ def resolve_assigned_to_id(assigned_user_identifier):
     return user.user_id
 
 @tasks_bp.route('/tasks/<string:task_id>', methods=['PUT'])
-@jwt_required_now
+@jwt_required
 def update_task(task_id):
     """
     Update an existing task's metadata by its ID (using form-data) and handle files.
@@ -933,7 +936,7 @@ def update_task(task_id):
 #         return jsonify({"error": str(e)}), 500
 
 @tasks_bp.route('/tasks/project/<string:project_id>' , methods = ['PUT'])
-@jwt_required_now
+@jwt_required
 def update_tasks_by_project_id(project_id):
     """
     Updates metadata for ALL tasks within a project_id. Optionally uploads files to a 
@@ -1020,7 +1023,7 @@ def update_tasks_by_project_id(project_id):
         return jsonify({"error" : "An unexpected server or database error occurred during the update."}), 500
 
 @tasks_bp.route('/tasks/space/<string:space_id>' , methods = ['PUT'])
-@jwt_required_now
+@jwt_required
 def update_tasks_by_space_id(space_id):
     """
     Updates metadata for ALL tasks within a space_id. Optionally uploads files to a 
@@ -1495,7 +1498,7 @@ def update_tasks_by_space_id(space_id):
 
 #delete task by id
 @tasks_bp.route('/tasks/<string:task_id>' , methods = ['DELETE'])
-@jwt_required_now
+@jwt_required
 def delete_task(task_id):
     """
     Deletes a single task by its unique ID.
@@ -1528,7 +1531,7 @@ def delete_task(task_id):
         return jsonify({"error" : str(e)}) , 500
     
 @tasks_bp.route('/tasks/project/<string:project_id>' , methods = ['DELETE'])
-@jwt_required_now
+@jwt_required
 def delete_tasks_by_project_id(project_id):
     
     """
@@ -1591,7 +1594,7 @@ def delete_tasks_by_project_id(project_id):
         return jsonify({"error": "A database error occurred during deletion."}), 500
     
 @tasks_bp.route('/tasks/space/<string:space_id>' , methods = ['DELETE'])
-@jwt_required_now
+@jwt_required
 def delete_tasks_by_space_id(space_id):
     """
     Deletes all tasks and their associated file records belonging to the given space_id.
@@ -1637,7 +1640,7 @@ def delete_tasks_by_space_id(space_id):
     
 # --- PATCH Route to update vendor_id for a specific task ---
 @tasks_bp.route('/tasks/assign_vendor/<string:task_id>', methods=['PATCH'])
-@jwt_required_now
+@jwt_required
 def assign_vendor_to_task(task_id):
     data = request.json
     

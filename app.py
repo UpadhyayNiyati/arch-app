@@ -301,6 +301,7 @@ from routes.invoices_routes import invoices_bp
 from routes.preset_routes import preset_bp
 from routes.pinterest_routes import pinterest_bp
 from auth.auth import auth_bp
+from routes.invite_routes import invite_bp
 
 app.register_blueprint(teams_bp , url_prefix = "/api/teams")
 app.register_blueprint(roles_bp, url_prefix="/api/roles")
@@ -331,6 +332,7 @@ app.register_blueprint(super_user_bp , url_prefix = '/api/super_user')
 app.register_blueprint(preset_bp , url_prefix = '/api/preset')
 app.register_blueprint(pinterest_bp , url_prefix = '/api/pinterest')
 app.register_blueprint(auth_bp , url_prefix = '/api/auth')
+app.register_blueprint(invite_bp , url_prefix = '/api/invite')
 
 #create tables
 with app.app_context():

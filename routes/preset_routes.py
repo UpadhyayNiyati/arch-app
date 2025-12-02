@@ -5,6 +5,7 @@ import logging
 import os
 from flask_cors import CORS
 import json
+from auth.auth import jwt_required
 
 
 preset_bp = Blueprint('Preset' , __name__)
@@ -74,7 +75,7 @@ def check_space_exists(space_id):
 
 # --- GET All Presets ---
 @preset_bp.route('/presets', methods=['GET'])
-@jwt_required()
+@jwt_required
 def get_presets():
     """Retrieves all presets from the database and returns them as a list of dictionaries."""
     all_presets = Preset.query.all()
@@ -84,7 +85,7 @@ def get_presets():
 
 # --- GET Preset by ID ---
 @preset_bp.route('/presets/<string:preset_id>', methods=['GET'])
-@jwt_required()
+@jwt_required
 def get_preset_by_id(preset_id):
     """Retrieves a single preset by its ID."""
     preset = Preset.query.get(preset_id)
@@ -96,7 +97,7 @@ def get_preset_by_id(preset_id):
 
 # --- POST (Create) a New Preset ---
 @preset_bp.route('/presets', methods=['POST'])
-@jwt_required()
+@jwt_required
 def create_preset():
     """Creates a new preset."""
     data = request.get_json()
@@ -133,7 +134,7 @@ def create_preset():
 
 # --- PUT/PATCH (Update) a Preset ---
 @preset_bp.route('/presets/<string:preset_id>', methods=['PUT', 'PATCH'])
-@jwt_required()
+@jwt_required
 def update_preset(preset_id):
     """Updates an existing preset by ID."""
     preset = Preset.query.get(preset_id)
@@ -166,7 +167,7 @@ def update_preset(preset_id):
 
 # --- DELETE a Preset ---
 @preset_bp.route('/presets/<string:preset_id>', methods=['DELETE'])
-@jwt_required()
+@jwt_required
 def delete_preset(preset_id):
     """Deletes a preset by ID."""
     preset = Preset.query.get(preset_id)

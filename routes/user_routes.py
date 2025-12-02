@@ -16,8 +16,10 @@ import smtplib
 import random
 import os
 import inspect
+from auth.auth import decode_jwt
 import jwt
 from flask_cors import CORS
+from utils.email_utils import send_email
 from itsdangerous import URLSafeTimedSerializer
 
 
@@ -28,18 +30,6 @@ import uuid
 user_bp = Blueprint('user' , __name__)
 bcrypt = Bcrypt()
 
-# Helper function to send email
-def send_email(recipients, subject, body):
-    msg = EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = os.getenv('EMAIL_SENDER')
-    msg['To'] = ', '.join(recipients)
-    msg.set_content(body)
-    with smtplib.SMTP('smtp.gmail.com', 587) as smtp:
-        smtp.starttls()
-        smtp.login(os.getenv('EMAIL_SENDER'), os.getenv('EMAIL_PASSWORD'))
-        smtp.send_message(msg)
-
 CORS(user_bp)
 
 def generate_uuid():
@@ -47,33 +37,12 @@ def generate_uuid():
 
 
 
-# def decode_reset_token(token):
-#     """Decodes and validates a password reset JWT token, checking its type."""
-#     # 1. Decode using the central helper function
-#     result = decode_jwt_custom(
-#         token,
-#         PASSWORD_RESET_SECRET,
-#         options={"require": ["exp", "user_id", "type"]}
-#     )
-
-#     # 2. Check if the token was technically valid (not expired/invalid signature)
-#     if not result.get("valid"):
-#         return result # Return the error dictionary (expired/invalid)
-
-#     # 3. Apply password-reset specific business logic
-#     decoded_data = result["data"]
-#     if decoded_data.get('type') != 'password_reset':
-#         return {"message": "Invalid token type", "invalid": True, "valid": False}
-
-#     # 4. Success
-#     return decoded_data
-
 def decode_reset_token(token):
     secret = PASSWORD_RESET_SECRET
 
     try:
         # Introspect what params decode_jwt_custom supports
-        sig = inspect.signature(decode_jwt_custom)
+        sig = inspect.signature(decode_jwt)
         params = sig.parameters
 
         # Build only allowed arguments
@@ -83,294 +52,11 @@ def decode_reset_token(token):
         if "options" in params:
             kwargs["options"] = {"verify_exp": True}
 
-        return decode_jwt_custom(token, secret, **kwargs)
+        return decode_jwt(token, secret, **kwargs)
 
     except TypeError:
         # Fallback: call with ONLY token + secret
-        return decode_jwt_custom(token, secret)
-
-
-import jwt
-import time
-
-def decode_jwt_custom(token, secret):
-    try:
-        print(secret)
-        print(token)
-        # Decode WITHOUT UTC exp check
-        payload = jwt.decode(
-            token,
-            secret,
-            algorithms=["HS256"],
-            options={"verify_exp": False}
-        )
-
-        # Manual expiration check (IST system time)
-        now_ts = time.time()
-
-        if "exp" in payload:
-            if payload["exp"] < now_ts:
-                print("DEBUG: Token expired (IST check)")
-                raise ValueError("Expired token")
-
-        return payload
-
-    except Exception as e:
-        print("DEBUG: JWT decode error ->", str(e))
-        raise ValueError("Invalid token")
-# def decode_jwt_custom(jwt_token, secret_key):
-#     try:
-#         print("PYTHON time.time():", time.time())
-#         print("datetime.utcnow():", datetime.utcnow().timestamp())      
-#         print("SERVER TIME:", datetime.utcnow().timestamp())
-#         decoded_unverified = jwt.decode(jwt_token, options={"verify_signature": False})
-#         print("TOKEN EXP:", decoded_unverified.get("exp"))
-#         print("DIFF =", datetime.utcnow().timestamp() - decoded_unverified.get("exp"))
-#                 # Decode the token and verify its signature
-
-#         print("jwt_token",jwt_token)
-#         # Setting options to require an expiration claim (exp)
-#         decoded = jwt.decode(
-#             jwt_token,
-#             secret_key,
-#             algorithms=["HS256"],
-#             leeway=20000 
-#             # options={"require": ["exp", "user_id", "type"]}
-#         )
-#         print(decoded)
-#         return decoded
-#     except jwt.ExpiredSignatureError:
-#         return {"message": "Token has expired", "expired": True}
-#     except jwt.InvalidTokenError:
-#         return {"message": "Invalid token", "invalid": True}
-
-# --- Custom Decorator for Authentication (Replacing the Flask-JWT-Extended one) ---
-# Since we are using custom token creation, we need a custom required decorator.
-
-# def custom_jwt_required(token_type='access'):
-#     def decorator(f):
-#         @wraps(f)
-#         def decorated_function(*args, **kwargs):
-#             auth_header = request.headers.get("Authorization")
-#             print("Authorization Header:", auth_header)
-#             if not auth_header or not auth_header.startswith("Bearer "):
-#                 return jsonify({"error": "Authorization header is missing or invalid"}), 401
-
-#             token = auth_header.split(" ")[1]
-#             secret = ACCESS_TOKEN_SECRET if token_type == 'access' else REFRESH_TOKEN_SECRET
-            
-#             try:
-#                 payload = decode_jwt_custom(token, secret)
-                
-#                 if payload.get("message"): # Check for expiration or invalid messages
-#                     exp = payload.get("exp")
-
-#                     if exp and exp < time.time():
-#                         return jsonify({"error": "Token has expired"}), 401
-#                     if payload.get("invalid"):
-#                         return jsonify({"error": "Invalid token"}), 401
-#                     return jsonify({"error": payload.get("message", "Token validation failed")}), 401
-
-#                 user_id = payload.get("user_id")
-#                 print(user_id)
-#                 company_id = payload.get("company_id")
-#                 if not user_id:
-#                     return jsonify({"message": "Unauthorized: Token missing user identity"}), 401
-                
-#                 # Attach user_id to the request context for use in the decorated function
-#                 # (Simulating what get_jwt_identity() does)
-#                 request.current_user_id = user_id
-#                 request.current_company_id = company_id
-
-#             except Exception as e:
-#                 return jsonify({"error": str(e)}), 401
-
-#             return f(*args, **kwargs)
-#         return decorated_function
-#     return decorator
-
-def jwt_required_now(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return jsonify({"error": "Authorization header is missing or invalid"}), 401
-
-        parts = auth_header.split(" ")
-
-        if len(parts) != 2 or parts[0].lower() != "bearer":
-            logging.error("Invalid Authorization header format")
-            raise ValueError("Invalid Authorization header format. Expected: Bearer <token>")
-       
-        token = parts[1].strip()
-
-        if token == "":
-            return jsonify({"error": "Bearer token missing"}), 401
-        
-        try:
-           
-            try:
-                payload = decode_jwt_custom(token, ACCESS_TOKEN_SECRET)
-                print(payload)
-            except Exception as e:
-                return jsonify({"error": "Invalid or expired token", "details": str(e)}), 401
-            user_id = payload.get("user_id")
-            if not user_id:
-             return jsonify({"error": "Invalid token payload"}), 401
-        except Exception as e:
-            return jsonify({"error": str(e)}), 401
-
-        return f(*args, **kwargs)
-    return decorated_function
-
-def custom_jwt_required(token_type='access'):
-    def decorator(f):
-        @wraps(f)
-        def decorated_function(*args, **kwargs):
-            auth_header = request.headers.get("Authorization")
-            print(auth_header)
-            if not auth_header or not auth_header.startswith("Bearer "):
-                return jsonify({"error": "Authorization header is missing or invalid"}), 401
-            token = auth_header.split(" ")[1]
-            secret = ACCESS_TOKEN_SECRET if token_type == 'access' else REFRESH_TOKEN_SECRET
-            print(token)
-            print(secret)
-            try:
-                payload = decode_jwt_custom(token, secret)
-                print(payload)
-                # Flags from decoder
-                if payload.get("invalid") or payload.get("expired"):
-                    return jsonify({"error": payload.get("message", "Invalid token")}), 401
-                
-                # Safe exp check
-                exp = payload.get("exp")
-                if exp:
-                    exp = int(exp)
-                    now = int(datetime.utcnow().timestamp())
-                    if exp < now:
-                        return jsonify({"error": "Token has expired"}), 401
-
-                # Extract fields
-                user_id = payload.get("user_id")
-                print(user_id)
-                company_id = payload.get("company_id")
-                print(company_id)
-
-                if not user_id:
-                    return jsonify({"message": "Unauthorized: Token missing user identity"}), 401
-
-                request.current_user_id = user_id
-                request.current_company_id = company_id
-
-            except Exception as e:
-                return jsonify({"error": str(e)}), 401
-
-            return f(*args, **kwargs)
-        return decorated_function
-    return decorator
-
-
-# --- Utility Functions for Role-Based Access Control (updated to use custom logic) ---
-
-def get_auth_key_from_request():
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        raise ValueError("Authorization header missing or malformed")
-    return auth_header.split(" ")[1]
-
-def get_user_id_from_auth_key(auth_key):
-    try:
-        payload = decode_jwt_custom(auth_key, ACCESS_TOKEN_SECRET)
-        if payload.get("expired") or payload.get("invalid"): return None
-        return payload.get('user_id')
-    except Exception as e:
-        logging.error(f"JWT decoding failed: {e}")
-        return None
-    
-def get_user_role(auth_key):
-    u_id = get_user_id_from_auth_key(auth_key)
-    if not u_id:
-        return None  
-    # Assuming User model has a direct role_id column based on get_all_users logic
-    user = User.query.get(u_id)
-    if user and user.role_id:
-        role = db.session.query(Role).filter_by(role_id=user.role_id).first()
-        return role.role_name if role else None
-    
-    # Fallback to UserRole if User doesn't have role_id directly (checking existing code)
-    userrole = db.session.query(UserRole).filter_by(user_id=u_id).first()
-    if userrole:
-        role = db.session.query(Role).filter_by(role_id=userrole.role_id).first()
-        return role.role_name if role else None
-    return None
-
-def superAdmin_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        try:
-            auth_header = get_auth_key_from_request()
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 401
-            
-        is_super_admin=get_user_role(auth_header)
-        
-        if is_super_admin != "Superadmin":
-            return jsonify({"error" : "Only Super Admin can access this page"}),403
-        return f(*args, **kwargs)
-    return decorated_function
-    
-
-def admin_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        try:
-            auth_header = get_auth_key_from_request()
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 401
-
-        is_admin = get_user_role(auth_header)
-        
-        if is_admin is None:
-            return jsonify({"message": "Invalid or expired token"}), 401
-        if is_admin != "Admin":
-            return jsonify({"error" : "Only Admin can access this page"}),403
-        return f(*args, **kwargs)
-    return decorated_function
-
-
-# def create_access_token_custom(user_id, company_id):
-#     # expiration = datetime.utcnow() + timedelta(minutes=15)
-#     exp = int(time.time()) + 3600  # 1 hour expiry
-#     integer_converted=int(exp.timestamp())
-#     payload = {'user_id': user_id, 'company_id': company_id, 'exp': integer_converted, 'type': 'access'}
-#     print(payload)
-#     return jwt.encode(payload, ACCESS_TOKEN_SECRET, algorithm='HS256')
-
-def create_access_token_custom(user_id, company_id):
-    # Calculate expiry as an integer Unix timestamp (current time + 3600 seconds/1 hour)
-    exp = int(time.time()) + 3600  # exp is already the correct integer value
-    
-    # integer_converted = int(exp.timestamp()) # REMOVE THIS LINE ENTIRELY
-
-    # Use 'exp' directly
-    payload = {'user_id': user_id, 'company_id': company_id, 'exp': exp, 'type': 'access'}
-    print(payload)
-    return jwt.encode(payload, ACCESS_TOKEN_SECRET, algorithm='HS256')
-
-# def create_refresh_token_custom(user_id, company_id):
-#     # expiration = datetime.utcnow() + refresh_token_expiry_time
-#     exp = int(time.time()) + 7 * 24 * 60 * 60
-#     payload = {'user_id': user_id, 'company_id': company_id, 'exp': exp.timestamp(), 'type': 'refresh'}
-#     return jwt.encode(payload, REFRESH_TOKEN_SECRET, algorithm='HS256')
-
-
-def create_refresh_token_custom(user_id, company_id):
-    # Calculate expiry as an integer Unix timestamp (current time + 7 days)
-    exp = int(time.time()) + 7 * 24 * 60 * 60
-    
-    # Use 'exp' directly (it's already an integer timestamp)
-    payload = {'user_id': user_id, 'company_id': company_id, 'exp': exp, 'type': 'refresh'}
-    return jwt.encode(payload, REFRESH_TOKEN_SECRET, algorithm='HS256')
+        return decode_jwt(token, secret)
 
 @user_bp.route('/get_users' , methods = ['GET'])
 def get_all_users():
@@ -439,9 +125,6 @@ def get_user_by_id(user_id):
     for user, role in user_with_roles:
         print(user, role) 
     
-    
-    
-    
      # Now works
 
     # user_with_roles = db.session.query(User , Role)\
@@ -507,220 +190,8 @@ def post_user():
         except Exception as e:
             return jsonify({"error" : str(e)}) , 500
         
-
-#user registration route
-@user_bp.route('/register' , methods = ['POST'])
-def register_user():
-    """
-    User Registration (Step 1: Create User & Send OTP)
-    ---
-    tags:
-      - User Authentication
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          $ref: '#/definitions/UserRegister'
-    responses:
-      201:
-        description: User registered. OTP sent to email.
-      400:
-        description: Missing required fields.
-      409:
-        description: User with this email already exists.
-      500:
-        description: Server error during registration or OTP generation/sending.
-    """
-    data = request.json
-    user_name = data.get("user_name")
-    user_email = data.get("user_email")
-    # user_phone = data.get("user_phone")
-    # user_address = data.get("user_address")
-    user_password = data.get("user_password")
-
-    if not all([user_name, user_email, user_password]):
-        return jsonify({"message": "All fields are required"}), 400
-
-    existing_user = User.query.filter_by(user_email=user_email).first()
-    if existing_user:
-        return jsonify({"message": "User with this email already exists"}), 409
-
-    try:
-        # Hash the password
-        hashed_password = bcrypt.generate_password_hash(user_password).decode('utf-8')
-
-        new_user = User(
-            user_name=user_name,
-            user_email=user_email,
-            # user_phone=user_phone,
-            # user_address=user_address,
-            user_password=hashed_password
-        )
-        db.session.add(new_user)
-        db.session.commit()
-        
-        otp_code = str(random.randint(100000, 999999))
-        expires_at = datetime.now() + timedelta(minutes = 5)
-        new_otp = OtpCode(
-            user_id=new_user.user_id,
-            otp_code=otp_code,
-            expires_at=expires_at,
-            type='registration'
-        )
-        db.session.add(new_otp)
-        db.session.commit()
-
-        # Send OTP via email
-        send_email(
-            recipients=[user_email],
-            subject="Your Registration OTP",
-            body=f"Hello {user_name},\n\nYour OTP code is {otp_code}. It is valid for 5 minutes."
-        )
-
-        return jsonify({"message": "User registered. Please check your email for the OTP."}), 201
-    except Exception as e:
-        return jsonify({"error" : str(e)}) , 500
-    
-#user login route
-
 #protected_route
-@user_bp.route('/user/protected' , methods = ['GET'])
-@custom_jwt_required()
-def protected_route():
-    # Access the claims directly from the request context!
-    return jsonify({
-        "message" : "You have access to this protected resource.", 
-        "user_id" : request.current_user_id,
-        "company_id": request.current_company_id
-    }) , 200
 
-from datetime import datetime , timezone , timedelta
-
-IST = timezone(timedelta(hours=5, minutes=30))
-
-# @user_bp.route('/refresh', methods=['POST'])
-# @custom_jwt_required(token_type='refresh')
-# def refresh_token():
-#     try:
-#         # 1. Extract token
-#         refresh_token = get_auth_key_from_request()
-
-#         # 2. Decode token manually using IST timestamps
-#         payload = decode_jwt_custom(refresh_token, REFRESH_TOKEN_SECRET)
-
-#         user_id = payload.get('user_id')
-#         if not user_id:
-#             return jsonify({"message": "Token payload missing user ID."}), 401
-
-#         # 3. Fetch user
-#         user = User.query.get(user_id)
-#         if not user:
-#             return jsonify({"message": "User not found."}), 404
-
-#         company_id = user.company_id  # always from DB
-
-#         # 4. Refresh token revocation check — MUST use IST
-#         now_ist = datetime.now(IST)
-
-#         stored_token_record = db.session.query(UserToken).filter(
-#             UserToken.token == refresh_token,
-#             UserToken.user_id == user_id,
-#             UserToken.expires_at > now_ist
-#         ).first()
-
-#         if not stored_token_record:
-#             return jsonify({
-#                 "message": "Invalid, revoked, or expired refresh token. Please log in again."
-#             }), 401
-
-#         # 5. Create new access token
-#         new_access_token = create_access_token_custom(user_id, company_id)
-
-#         return jsonify({
-#             "access_token": new_access_token
-#         }), 200
-
-#     except Exception as e:
-#         db.session.rollback()
-#         logging.error(f"Error during token refresh: {e}", exc_info=True)
-#         return jsonify({'message': f'Server error: {str(e)}'}), 500
-
-# @user_bp.route('/refresh', methods=['POST'])
-# @jwt_required_now
-# def refresh_token():
-#     try:
-#         refresh_token = get_auth_key_from_request()
-
-#         # Decode using IST-friendly function
-#         payload = decode_jwt_custom(refresh_token, REFRESH_TOKEN_SECRET)
-
-#         user_id = payload.get('user_id')
-#         if not user_id:
-#             return jsonify({"message": "Token payload missing user ID."}), 401
-
-#         user = User.query.get(user_id)
-#         if not user:
-#             return jsonify({"message": "User not found."}), 404
-
-#         # company_id must come from DB
-#         company_id = user.company_id
-#         print(company_id)
-#         if not company_id:
-#             return jsonify({"message": "User does not belong to any company."}), 400
-
-#         # IST now
-#         now_ist = datetime.now(IST)
-
-#         # Convert IST to UTC if your DB stores UTC timestamps
-#         now_utc = now_ist.astimezone(timezone.utc)
-
-#         stored_token_record = db.session.query(UserToken).filter(
-#             UserToken.token == refresh_token,
-#             UserToken.user_id == user_id,
-#             UserToken.expires_at > now_utc      # FIXED
-#         ).first()
-
-#         if not stored_token_record:
-#             return jsonify({
-#                 "message": "Invalid, revoked, or expired refresh token. Please log in again."
-#             }), 401
-
-#         new_access_token = create_access_token_custom(user_id, company_id)
-
-#         return jsonify({
-#             "access_token": new_access_token
-#         }), 200
-
-#     except Exception as e:
-#         db.session.rollback()
-#         logging.error(f"Error during token refresh: {e}", exc_info=True)
-#         return jsonify({'message': f'Server error: {str(e)}'}), 500
-
-
-
-# @user_bp.route('/refresh' , methods = ['POST'])
-# @custom_jwt_required(token_type = 'refresh')
-# def refresh_token():
-#     current_user_id = get_jwt_identity()
-#     auth_header = request.headers.get('Authorization')
-#     if not auth_header or not auth_header.startswith('Bearer '):
-#         # This should rarely happen as jwt_required usually catches it, but it's safe.
-#         return jsonify({"message": "Authorization header missing or malformed"}), 400
-#     token_to_check = auth_header.split()[1]
-#     token_record = UserToken.query.filter(
-#             UserToken.user_id == current_user_id,
-#             UserToken.token == token_to_check,
-#             UserToken.expires_at > datetime.utcnow()
-#         ).first()
-#     if not token_record:
-#             # If the token is not found, it means it was revoked (via /logout) or is expired.
-#             return jsonify({"message": "Invalid or revoked refresh token. Please log in again."}), 401
-#     new_access_token = create_access_token(identity = current_user_id , expires_delta = timedelta(minutes = 15))
-#     return jsonify({
-
-#         "access_token" : new_access_token
-#     }) , 200
 
 
 #update user    
@@ -768,33 +239,24 @@ def update_user(user_id):
     return jsonify({"message" : "User updated successfully!!"}) , 200
 
 #delete user
-@user_bp.route('/del_user/<string:user_id>' , methods = ['DELETE'])
+@user_bp.route('/delete_user/<string:user_id>', methods=['DELETE'])
 def del_user(user_id):
-    """
-    Delete User
-    ---
-    tags:
-      - User Management
-    parameters:
-      - name: user_id
-        in: path
-        type: string
-        required: true
-    responses:
-      200:
-        description: User deleted successfully.
-      404:
-        description: User not found.
-      500:
-        description: Server error during deletion.
-    """
-    user = User.query.get_or_404(user_id)
-    if not user:
-        return jsonify({"message":"User not found"}) , 404
-    db.session.delete(user)
-    db.session.commit()
-    return jsonify({"message" : "User deleted successfully!!"}) , 200
+    try:
+        user = User.query.get_or_404(user_id)
 
+        # DELETE CHILD RECORDS FIRST
+        UserToken.query.filter_by(user_id=user_id).delete()
+        OtpCode.query.filter_by(user_id=user_id).delete()   # <-- ADD THIS
+
+        db.session.delete(user)
+        db.session.commit()
+
+        return jsonify({"message": "User deleted successfully"}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        print("DELETE ERROR:", str(e))
+        return jsonify({"error": str(e)}), 500
 
 @user_bp.route('/dashboard/<string:user_id>', methods=['GET'])
 def get_user_dashboard(user_id):
@@ -928,101 +390,6 @@ def get_user_dashboard(user_id):
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
     
-@user_bp.route('/verify_registration_otp', methods=['POST'])
-def verify_registration_otp():
-    """
-    Verify Registration OTP (Step 2: OTP Verification & Final Login)
-    ---
-    tags:
-      - User Authentication
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          $ref: '#/definitions/OtpVerify'
-    responses:
-      200:
-        description: Registration complete and OTP verified. Returns access tokens.
-        schema:
-          $ref: '#/definitions/AuthResponse'
-      400:
-        description: Missing required fields.
-      401:
-        description: Invalid, expired, or used OTP code.
-      404:
-        description: User not found.
-    """
-    data = request.json
-    user_email = data.get("user_email")
-    otp_code = data.get("otp_code")
-
-    if not all([user_email, otp_code]):
-        return jsonify({"message": "Email and OTP code are required"}), 400
-
-    user = User.query.filter_by(user_email=user_email).first()
-    if not user:
-        return jsonify({"message": "User not found"}), 404
-
-    # Find the valid, unused, and unexpired OTP for this user and type
-    otp_record = OtpCode.query.filter(
-        OtpCode.user_id == user.user_id,
-        OtpCode.otp_code == otp_code,
-        OtpCode.expires_at > datetime.now(),
-        OtpCode.is_used == False,
-        OtpCode.type == 'registration'
-    ).order_by(OtpCode.created_at.desc()).first()
-
-    if otp_record:
-        # Mark OTP as used
-        otp_record.is_used = True
-        db.session.commit()
-        
-        company_id = user.company_id
-
-        # You might want to 'activate' the user here if you have an 'is_active' column
-        # user.is_active = True 
-        # db.session.commit()
-
-        # Generate access token
-        # access_token = create_access_token(identity=user.user_id, expires_delta=timedelta(minutes=15))
-        # refresh_token = create_refresh_token(identity=user.user_id , expires_delta = timedelta(days = 7))
-        access_token = create_access_token_custom(user.user_id, company_id)     
-        refresh_token = create_refresh_token_custom(user.user_id, company_id)
-        
-        # Send confirmation email
-        send_email(
-            recipients=[user_email],
-            subject="Registration Successful!",
-            body=f"Hello {user.user_name},\n\nYour account has been successfully verified and registered."
-        )
-
-        return jsonify({
-            "message": "Registration complete and OTP verified. Login successful.",
-            # "access_token": access_token,
-            # "refresh_token" : refresh_token,
-            "user_id": user.user_id
-        }), 200
-    else:
-        # Increment attempt counter (optional, for brute-force protection)
-        failed_otp = OtpCode.query.filter(
-            OtpCode.user_id == user.user_id,
-            OtpCode.otp_code == otp_code,
-            OtpCode.type == 'user_registration'
-        ).first()
-        if failed_otp:
-            failed_otp.attempts += 1
-            db.session.commit()
-            
-        return jsonify({"message": "Invalid, expired, or used OTP code."}), 401
-    
-access_token_expiry_time=timedelta(minutes=30)
-refresh_token_expiry_time=timedelta(days=7)
-
-ACCESS_TOKEN_SECRET=str(os.getenv('ACCESS_TOKEN_SECRET'))
-REFRESH_TOKEN_SECRET=str(os.getenv('REFRESH_TOKEN_SECRET'))
-
-
 
 
     
@@ -1038,108 +405,6 @@ REFRESH_TOKEN_SECRET=str(os.getenv('REFRESH_TOKEN_SECRET'))
 
 
 # --- NEW: OTP Verification for Login ---
-@user_bp.route('/verify_login_otp', methods=['POST'])
-def verify_login_otp():
-    """
-    Verify Login OTP (Step 2: OTP Verification & Final Login)
-    ---
-    tags:
-      - User Authentication
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          $ref: '#/definitions/OtpVerify'
-    responses:
-      200:
-        description: Login successful. Returns access tokens.
-        schema:
-          $ref: '#/definitions/AuthResponse'
-      400:
-        description: Missing required fields.
-      401:
-        description: Invalid, expired, or used OTP code.
-      404:
-        description: User not found.
-    """
-    data = request.json
-    user_email = data.get("user_email")
-    otp_code = data.get("otp_code")
-
-    if not all([user_email and otp_code]):
-        return jsonify({"message": "OTP code are required"}), 400
-
-    user = User.query.filter_by(user_email=user_email).first()
-    if not user:
-        return jsonify({"message": "User not found"}), 404
-
-    # Find the valid, unused, and unexpired OTP for this user and type
-    otp_record = OtpCode.query.filter(
-        OtpCode.user_id == user.user_id,
-        OtpCode.otp_code == otp_code,
-        OtpCode.expires_at > datetime.now(),
-        OtpCode.is_used == False,
-        OtpCode.type == 'login'
-    ).order_by(OtpCode.created_at.desc()).first()
-
-    if otp_record:
-        # Mark OTP as used
-        otp_record.is_used = True
-        db.session.commit()
-
-        company_id = user.company_id
-        print(company_id)
-        # Generate access token
-        # access_token = create_access_token(identity=user.user_id, expires_delta=timedelta(days=1))
-        refresh_token_delta = timedelta(days = 7)
-        # refresh_token = create_refresh_token(identity=user.user_id , expires_delta = refresh_token_delta)
-        access_token = create_access_token_custom(user.user_id, company_id) # <-- Use Custom
-        refresh_token = create_refresh_token_custom(user.user_id, company_id)
-
-        #generate uuid
-        token_id = generate_uuid()
-
-        #store the access and refresh tokens
-        refresh_token_expires_at = datetime.now(IST) + refresh_token_delta
-        # refresh_token_hashed = generate_password_hash(refresh_token)
-
-        new_token_record = UserToken(
-            user_id = user.user_id , 
-            token = refresh_token , 
-            expires_at = refresh_token_expires_at
-        )
-
-        db.session.add(new_token_record)
-        db.session.commit()
-
-        
-        # Send confirmation email
-        send_email(
-            recipients=[user_email],
-            subject="Successful Login Notification",
-            body=f"Hello {user.user_name},\n\nYour login attempt at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} was successful."
-        )
-
-        return jsonify({
-            "message": "Login successful.",
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "user_id": user.user_id,
-            "company_id": company_id
-        }), 200
-    else:
-        # Increment attempt counter (optional, for brute-force protection)
-        failed_otp = OtpCode.query.filter(
-            OtpCode.user_id == user.user_id,
-            OtpCode.otp_code == otp_code,
-            OtpCode.type == 'user_login'
-        ).first()
-        if failed_otp:
-            failed_otp.attempts += 1
-            db.session.commit()
-            
-        return jsonify({"message": "Invalid, expired, or used OTP code."}), 401
 
 # @user_bp.route('/refresh', methods=['POST'])
 # @custom_jwt_required(token_type='refresh') # Require a valid refresh token
@@ -1183,22 +448,22 @@ def verify_login_otp():
 
 
     
-@user_bp.route('/user/protected', methods=['GET'])
-@custom_jwt_required # Use the custom decorator
-def protected_route():
-    # You would need to get the user ID from the token payload inside the route or via a helper
-    # For now, let's keep the user_id extraction logic clean:
-    try:
-        token = get_auth_key_from_request()
-        payload = decode_jwt_custom(token, ACCESS_TOKEN_SECRET)
-        current_user_id = payload.get('user_id')
-    except Exception:
-        current_user_id = "Unknown" # Should be caught by the decorator, but good fallback
+# @user_bp.route('/user/protected', methods=['GET'])
+# @custom_jwt_required # Use the custom decorator
+# def protected_route():
+#     # You would need to get the user ID from the token payload inside the route or via a helper
+#     # For now, let's keep the user_id extraction logic clean:
+#     try:
+#         token = get_auth_key_from_request()
+#         payload = decode_jwt_custom(token, ACCESS_TOKEN_SECRET)
+#         current_user_id = payload.get('user_id')
+#     except Exception:
+#         current_user_id = "Unknown" # Should be caught by the decorator, but good fallback
 
-    return jsonify({
-        "message": "You have access to this protected resource.",
-        "user_id": current_user_id
-    }), 200
+#     return jsonify({
+#         "message": "You have access to this protected resource.",
+#         "user_id": current_user_id
+#     }), 200
 
 
 PASSWORD_RESET_SECRET = os.getenv('PASSWORD_RESET_SECRET', 'your_password_reset_secret_key') 
@@ -1377,15 +642,4 @@ def create_role():
         return jsonify({"error": str(e)}), 500
     
 
-@user_bp.route('/company_projects')
-@custom_jwt_required()
-def get_company_projects():
-    # Get payload from the validated token
-    auth_header = get_auth_key_from_request()
-    payload = decode_jwt_custom(auth_header, ACCESS_TOKEN_SECRET)
-    
-    current_company_id = payload.get('company_id') # Quick access to company_id
 
-    # Filter all queries by company_id for security and performance
-    projects = Projects.query.filter_by(company_id=current_company_id).all()
-    # ... rest of the logic

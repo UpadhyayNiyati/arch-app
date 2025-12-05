@@ -1,7 +1,8 @@
 from flask import Flask, request, jsonify , Blueprint , g
-from models import db , Invite , User
+from models import db , Invite , User , Role , UserRole
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
+from flask_cors import cross_origin
 import uuid
 import logging
 from flask_cors import CORS
@@ -55,7 +56,7 @@ def send_invite():
             raw_token_id=raw_token[:8],
             token_hash=token_hash,
             salt=salt,
-            expires_at=datetime.utcnow() + timedelta(hours=72),
+            expires_at=datetime.utcnow() + timedelta(hours=1),
             single_use=True
         )
 
@@ -164,3 +165,194 @@ def register_from_invite():
     return jsonify({"message": "Account created successfully"}), 201
 
 
+# @invite_bp.route("/user/revoke_admin", methods=["POST"])
+# @jwt_required
+# def revoke_admin():
+#     data = request.get_json()
+#     target_user_id = data.get("user_id")
+#     company_id = data.get("company_id")
+
+#     # Get the user making the request
+#     current_user_id = request.current_user_id
+#     current_user = User.query.get(current_user_id)
+
+#     # Only allow if current user is admin
+#     if not current_user.is_admin or current_user.company_id != company_id:
+#         return jsonify({"error": "Not authorized"}), 403
+
+#     # Find the target user
+#     target_user = User.query.filter_by(user_id=target_user_id, company_id=company_id).first()
+#     if not target_user:
+#         return jsonify({"error": "User not found"}), 404
+
+#     # Revoke admin
+#     target_user.is_admin = False
+#     db.session.commit()
+
+#     return jsonify({"message": f"Admin rights revoked for {target_user.user_name}"}), 200
+
+
+# @invite_bp.route("/user/revoke_admin", methods=["POST"])
+# @jwt_required# Use parentheses if not already done in your setup
+# def revoke_admin():
+#     """
+#     Revokes the 'Administrator' role from a specified user within the same company.
+#     Requires the current user to also have the 'Administrator' role.
+#     """
+#     data = request.get_json()
+#     target_user_id = data.get("user_id")
+#     company_id = data.get("company_id") # The company of the target user
+
+#     # --- 1. Basic Input Validation ---
+#     if not all([target_user_id, company_id]):
+#         return jsonify({"error": "Missing required fields: user_id and company_id"}), 400
+
+#     # --- 2. Get Current User and Admin Role ---
+#     # Assuming request.current_user_id is set by a custom JWT loader or similar
+#     current_user_id = request.current_user_id
+#     current_user = User.query.filter_by(user_id=current_user_id).first()
+    
+#     # This check is mostly for safety, as jwt_required should ensure a user exists
+#     if not current_user:
+#         return jsonify({"error": "Authentication user not found"}), 401 
+
+#     admin_role = Role.query.filter_by(role_name="Administrator").first()
+#     if not admin_role:
+#         return jsonify({"error": "Administrator role not found in system"}), 500
+        
+#     # --- 3. Authorization Check (Current User) ---
+#     # Check if current user is an admin AND belongs to the specified company
+#     is_admin = UserRole.query.filter_by(
+#         user_id=current_user.user_id,
+#         role_id=admin_role.role_id
+#     ).first()
+
+#     # The authorization logic is to check if the current user has the Admin role 
+#     # AND that the operation is being performed within their own company context.
+#     if not is_admin or (current_user.company_id != company_id):
+#         # Prevent non-admins or users from different companies from revoking roles
+#         return jsonify({"error": "Not authorized to perform this action in this context"}), 403
+
+#     # --- 4. Find the Target User ---
+#     # Target user must exist and belong to the same company being targeted
+#     target_user = User.query.filter_by(
+#         user_id=target_user_id, 
+#         company_id=company_id
+#     ).first()
+    
+#     if not target_user:
+#         return jsonify({"error": "Target user not found in the specified company"}), 404
+
+#     # Prevent an admin from revoking their own administrator status
+#     if target_user.user_id == current_user_id:
+#         return jsonify({"error": "You cannot revoke your own administrator rights"}), 400
+
+#     # --- 5. Revoke Administrator Role ---
+#     # Find the link between the target user and the Administrator role
+#     user_role_link = UserRole.query.filter_by(
+#         user_id=target_user.user_id,
+#         role_id=admin_role.role_id
+#     ).first()
+
+#     if not user_role_link:
+#         # User doesn't have the role, so the goal is already achieved
+#         return jsonify({
+#             "message": f"Administrator rights already revoked or never assigned for {target_user.user_name if target_user.user_name else target_user.user_email}"
+#         }), 200
+
+#     # --- 6. Remove UserRole link and Commit ---
+#     db.session.delete(user_role_link)
+#     db.session.commit()
+
+#     return jsonify({
+#         "message": f"Administrator rights revoked for {target_user.user_name if target_user.user_name else target_user.user_email}"
+#     }), 200
+
+@invite_bp.route("/user/grant_admin", methods=["POST"])
+@jwt_required
+def grant_admin():
+    data = request.get_json()
+    target_user_id = data.get("user_id")
+    company_id = data.get("company_id")
+
+    # Get the user making the request
+    current_user_id = request.current_user_id
+    current_user = User.query.get(current_user_id)
+
+    # Only allow if current user is admin
+    if not current_user.is_admin or current_user.company_id != company_id:
+        return jsonify({"error": "Not authorized"}), 403
+
+    # Find the target user
+    target_user = User.query.filter_by(user_id=target_user_id, company_id=company_id).first()
+    if not target_user:
+        return jsonify({"error": "User not found"}), 404
+
+    # Grant admin
+    target_user.is_admin = True
+    db.session.commit()
+
+    return jsonify({"message": f"Admin rights granted to {target_user.user_name}"}), 200
+
+@invite_bp.route("/user/revoke_access", methods=["POST"])
+@jwt_required
+def revoke_access():
+    """
+    Deactivates a specified user's account within the same company,
+    effectively revoking their access.
+    Requires the current user to have the 'Administrator' role
+    and belong to the specified company.
+    """
+    data = request.get_json()
+    target_user_id = data.get("user_id")
+    company_id = data.get("company_id")
+
+    # --- 1. Basic Input Validation ---
+    if not all([target_user_id, company_id]):
+        return jsonify({"error": "Missing required fields: user_id and company_id"}), 400
+
+    # --- 2. Get Current User and Admin Role ---
+    current_user_id = request.current_user_id
+    
+    # We only need the admin role ID for the UserRole check
+    admin_role = Role.query.filter_by(role_name="Administrator").first()
+    if not admin_role:
+        return jsonify({"error": "Administrator role not found in system"}), 500
+        
+    # --- 3. Combined Authorization Check (Current User) ---
+    # Check if current user is an admin AND belongs to the specified company in UserRole
+    is_admin_of_company = UserRole.query.filter_by(
+        user_id=current_user_id, # Use current_user_id directly from the token
+        role_id=admin_role.role_id,
+        # company_id=company_id # Check company membership directly from UserRole
+    ).first()
+
+    if not is_admin_of_company:
+        return jsonify({"error": "Not authorized: Current user is not an Admin for this company."}), 403
+
+    # --- 4. Find the Target User ---
+    # Find the target user and ensure they belong to the specified company
+    target_user = User.query.filter_by(
+        user_id=target_user_id, 
+        company_id=company_id
+    ).first()
+    
+    if not target_user:
+        return jsonify({"error": "Target user not found in the specified company"}), 404
+
+    # Prevent an admin from revoking their own access
+    if target_user.user_id == current_user_id:
+        return jsonify({"error": "You cannot revoke your own access"}), 400
+
+    # --- 5. Revoke Access (Deactivate User) ---
+    if not target_user.is_active:
+        return jsonify({
+            "message": f"Access already revoked for {target_user.user_name if target_user.user_name else target_user.user_email}"
+        }), 200
+
+    target_user.is_active = False # Assuming 'is_active' is the field for access control
+    db.session.commit()
+
+    return jsonify({
+        "message": f"Access successfully revoked (user deactivated) for {target_user.user_name if target_user.user_name else target_user.user_email}"
+    }), 200

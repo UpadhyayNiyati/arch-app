@@ -15,7 +15,7 @@ import random
 # from architect_backend0.routes.clients_routes import send_email
 from utils.email_utils import send_email
 from email.message import EmailMessage
-from models import OtpCode, User, UserToken,db, generate_uuid
+from models import OtpCode, User, UserToken,db, generate_uuid , Company
 # from werkzeug.security import generate_password_hash,check_password_hash
 from auth.authhelpers import  REFRESH_TOKEN_SECRET, create_access_token, create_refresh_token, decode_jwt,  jwt_required, refresh_token_expiry_time
 from werkzeug.exceptions import BadRequest
@@ -115,7 +115,10 @@ def login_user():
                 body=f"Hello {user.user_name},\n\nYour login verification code is {otp_code}. It is valid for 5 minutes."
             )
 
-            return jsonify({"message": "OTP sent for login verification. Please check your email."}), 200
+            return jsonify({"message": "OTP sent for login verification. Please check your email." , 
+                            "user_id": user.user_id,
+                            "company_id": user.company_id,
+                            "user_name": user.user_name}), 200
         
         except Exception as e:
             db.session.rollback()
@@ -402,6 +405,7 @@ def verify_registration_otp():
 
         return jsonify({
             "message": "Registration complete and OTP verified. Login successful.",
+            "company_id": user.company_id,
             # "access_token": access_token,
             # "refresh_token" : refresh_token,
             "user_id": user.user_id
@@ -457,23 +461,44 @@ def register_user():
     # user_address = data.get("user_address")
     user_password = data.get("user_password")
 
+    #-----company details can be added later-------#
+    company_name = data.get('company_name')
+    company_address = data.get('company_address')
+    company_email = data.get('company_email', '').strip().lower()
+    company_phone = data.get('company_phone')
+
     if not all([user_name, user_email, user_password]):
         return jsonify({"message": "All fields are required"}), 400
 
     existing_user = User.query.filter(func.lower(User.user_email) == user_email).first()
     if existing_user:
         return jsonify({"message": "User with this email already exists"}), 409
+    
+    existing_company = Company.query.filter(func.lower(Company.company_email) == company_email).first()
+    if existing_company:
+        return jsonify({"message": "Company with this email already exists"}), 409
 
     try:
         # Hash the password
         hashed_password = bcrypt.generate_password_hash(user_password).decode('utf-8')
+
+        # 1️⃣ Create the company
+        new_company = Company(
+            company_name=company_name,
+            company_address=company_address,
+            company_email=company_email,
+            company_phone=company_phone
+        )
+        db.session.add(new_company)
+        db.session.flush() 
 
         new_user = User(
             user_name=user_name,
             user_email=user_email,
             # user_phone=user_phone,
             # user_address=user_address,
-            user_password=hashed_password
+            user_password=hashed_password,
+            company_id=new_company.company_id
         )
         db.session.add(new_user)
         db.session.flush()
@@ -497,7 +522,10 @@ def register_user():
             body=f"Hello {user_name},\n\nYour OTP code is {otp_code}. It is valid for 5 minutes."
         )
 
-        return jsonify({"message": "User registered. Please check your email for the OTP."}), 201
+        return jsonify({"message": "User  and registered. Please check your email for the OTP.",
+                        "user_name": new_user.user_name , 
+                        "user_id": new_user.user_id,
+                        "company_id": new_user.company_id,}), 201
     except Exception as e:
         db.session.rollback() 
         return jsonify({"error" : str(e)}) , 500

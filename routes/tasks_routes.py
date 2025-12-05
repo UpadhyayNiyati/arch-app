@@ -281,7 +281,7 @@ def get_tasks_by_space_id(space_id):
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO) 
 @tasks_bp.route('/tasks' , methods = ['POST'])
-@jwt_required
+# @jwt_required
 def add_tasks():
     """
     Create a new task, optionally including file attachments.
@@ -333,34 +333,45 @@ def add_tasks():
     for field in required_fields:
         if not data.get(field):
             return jsonify({'error': f"'{field}' is required"}), 400
-        
-    task_date_str = data.get('date')
-    task_date_to_save = None # Initialize to None
 
-    task_date_str = data.get('date')
+    task_date_str = data.get("date")
     task_date_to_save = None
 
-    if task_date_str:
-      try:
-        # **Case 1: Full Date-Time** (If input is like: 2025-12-12T15:30:00)
-        # We handle the 'T' and assume no timezone for simple cases
-        if 'T' in task_date_str:
-             # Strip off any timezone info (+HH:MM or Z) if not needed for the database
-             if '+' in task_date_str:
-                 task_date_str = task_date_str.split('+')[0]
-             elif task_date_str.endswith('Z'):
-                 task_date_str = task_date_str[:-1]
+# --- Allow empty or null date ---
+    if task_date_str and task_date_str.strip().lower() not in ["", "null", "none"]:
+        logger.warning("RAW DATE RECEIVED FROM FRONTEND: '%s'", task_date_str)
 
-             task_date_to_save = datetime.strptime(task_date_str, '%Y-%m-%dT%H:%M:%S')
+        # Remove timezone safely
+        cleaned = task_date_str.replace("Z", "")
+        if "+" in cleaned:
+            cleaned = cleaned.split("+")[0]
 
-        # **Case 2: Date Only** (If input is like: 2025-12-12)
-        else:
-             task_date_to_save = datetime.strptime(task_date_str, '%Y-%m-%d')
-            
-      except ValueError as e:
-        logger.error("Error parsing date '%s': %s", task_date_str, str(e))
-        return jsonify({'error': "Invalid date format. Please use ISO 8601 format (e.g., 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM:SS')."}), 400
-            
+        possible_formats = [
+            '%Y-%m-%dT%H:%M:%S',
+            '%Y-%m-%dT%H:%M',
+            '%Y-%m-%d',
+            '%d-%m-%YT%H:%M:%S',
+            '%d-%m-%YT%H:%M',
+            '%d-%m-%Y'
+        ]
+
+        parsed = None
+        for fmt in possible_formats:
+            try:
+                parsed = datetime.strptime(cleaned, fmt)
+                logger.warning("DATE MATCHED FORMAT: %s", fmt)
+                break
+            except ValueError:
+                continue
+
+        if parsed is None:
+            return jsonify({
+                "error": "Invalid date format. Allowed formats are: "
+                         "YYYY-MM-DD, YYYY-MM-DDTHH:MM, YYYY-MM-DDTHH:MM:SS, "
+                         "DD-MM-YYYY, DD-MM-YYYYTHH:MM:SS"
+            }), 400
+
+        task_date_to_save = parsed
     # Validate project exists
     assigned_user_id_to_save = None
 
@@ -430,6 +441,7 @@ def add_tasks():
                         'description':new_task.description,
                         'project_id':new_task.project_id , 
                         'date' : task_date_to_save,
+                        'assigned_to': user.user_name if user else None
                         }) , 201
     except Exception as e:
         db.session.rollback()

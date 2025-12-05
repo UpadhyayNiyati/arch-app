@@ -20,11 +20,11 @@ import datetime
 import platform
 import sys
 
-print("Python:", sys.version)
-print("Platform:", platform.platform())
-print("time.time() =", time.time())
-print("utcnow timestamp =", datetime.datetime.utcnow().timestamp())
-print("difference =", datetime.datetime.utcnow().timestamp() - time.time())
+# print("Python:", sys.version)
+# print("Platform:", platform.platform())
+# print("time.time() =", time.time())
+# print("utcnow timestamp =", datetime.datetime.utcnow().timestamp())
+# print("difference =", datetime.datetime.utcnow().timestamp() - time.time())
 
 
 
@@ -301,6 +301,7 @@ from routes.invoices_routes import invoices_bp
 from routes.preset_routes import preset_bp
 from routes.pinterest_routes import pinterest_bp
 from auth.auth import auth_bp
+from routes.user_roles_routes import user_roles_bp
 from routes.invite_routes import invite_bp
 
 app.register_blueprint(teams_bp , url_prefix = "/api/teams")
@@ -333,6 +334,7 @@ app.register_blueprint(preset_bp , url_prefix = '/api/preset')
 app.register_blueprint(pinterest_bp , url_prefix = '/api/pinterest')
 app.register_blueprint(auth_bp , url_prefix = '/api/auth')
 app.register_blueprint(invite_bp , url_prefix = '/api/invite')
+app.register_blueprint(user_roles_bp , url_prefix = '/api/user_roles')
 
 #create tables
 with app.app_context():
@@ -341,9 +343,9 @@ with app.app_context():
 
 
 
-print(os.path.exists("uploads/inspiration_uploads/2a59677d-b072-4570-925c-255a85efe195/Screenshot_2025-01-21_155435.png"))
+# print(os.path.exists("uploads/inspiration_uploads/2a59677d-b072-4570-925c-255a85efe195/Screenshot_2025-01-21_155435.png"))
 
-print(app.url_map)
+# print(app.url_map)
 
 if __name__ == "__main__":
     app.run(debug = True)

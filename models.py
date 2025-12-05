@@ -36,6 +36,7 @@ class UserRole(db.Model):
     user_id = db.Column(db.String(50), db.ForeignKey('user.user_id'), nullable=True)
     # The foreign key for 'roles' table is already correct
     role_id = db.Column(db.String(64), db.ForeignKey('roles.role_id'), nullable=True)
+    # company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
 
 class Clients(db.Model):
     __tablename__ = 'clients'
@@ -45,7 +46,8 @@ class Clients(db.Model):
     client_phone = db.Column(db.String(255) , nullable = True , unique = True)
     client_address = db.Column(db.String(255) , nullable = True)
     user_id = db.Column(db.String(50), db.ForeignKey('user.user_id'), nullable=True)
-    client_password = db.Column(db.String(255), nullable=True) 
+    client_password = db.Column(db.String(255), nullable=True) ,
+    # company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
 
 
     # Optional: Define the relationship for easier querying
@@ -117,7 +119,7 @@ class ProjectTemplates(db.Model):
 class Tasks(db.Model):
     __tablename__ = 'tasks'
     task_id = db.Column(db.String(50) , primary_key = True , default = generate_uuid)
-    project_id = db.Column(db.String(50) , db.ForeignKey('projects.project_id') , nullable =  False)
+    project_id = db.Column(db.String(50) , db.ForeignKey('projects.project_id') , nullable =  True)
     task_name = db.Column(db.String(255) , nullable = True)
     description = db.Column(db.Text , nullable = True)
     status = db.Column(db.String(50) , nullable = True)
@@ -186,6 +188,7 @@ class Role(db.Model):
     __tablename__ = 'roles'
     role_id = db.Column(db.String(64), primary_key=True, default=generate_uuid)
     role_name = db.Column(db.String(50), unique=True, nullable=True)
+    company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
     role_permissions = db.relationship('RolePermission', backref='role', lazy=True, cascade='all, delete-orphan')
 
 class Permission(db.Model):

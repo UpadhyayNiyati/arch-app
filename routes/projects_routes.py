@@ -94,9 +94,12 @@ def get_project_by_id(project_id):
 @projects_bp.route('/projects', methods=['POST'])
 @jwt_required
 def add_projects():
+
+    # company_id = request.current_company_id
     data = request.json
     # The required_fields list has been updated to include 'client_id'
     required_fields = ['project_name' ,'location', 'due_date', 'status', 'project_description', 'client_name']
+    
     
     # 1. Check if all required fields are present
     if not all(field in data for field in required_fields):
@@ -108,6 +111,7 @@ def add_projects():
 
         # 1. Verify that the client exists
         client = Clients.query.filter_by(client_name=client_name).first()
+        # company_id == company_id
 
         if client is None:
             new_client = Clients(client_name = client_name)
@@ -128,7 +132,8 @@ def add_projects():
             status=data['status'],
             project_description=data['project_description'],
             # client_name=data['client_name']
-            client_id = client_id
+            client_id = client_id,
+            # company_id = company_id
         )
         
         # 3. Add and commit the new project to the database

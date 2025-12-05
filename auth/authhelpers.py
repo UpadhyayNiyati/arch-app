@@ -77,3 +77,36 @@ def jwt_required(f):
 
 def get_auth_key_from_request(request):
     pass
+
+
+import jwt
+from flask import request, jsonify
+
+ACCESS_TOKEN_SECRET = "your-secret-key"  # import this from config if needed
+
+
+def get_user_from_auth_header():
+    """
+    Extracts and decodes user_id + company_id from a custom JWT.
+    Expected header format:
+    Authorization: Bearer <token>
+    """
+    auth_header = request.headers.get("Authorization", None)
+    if not auth_header:
+        return None, jsonify({"error": "Missing Authorization header"}), 401
+
+    if not auth_header.startswith("Bearer "):
+        return None, jsonify({"error": "Invalid Authorization format"}), 401
+
+    token = auth_header.split(" ")[1]
+
+    try:
+        payload = jwt.decode(token, ACCESS_TOKEN_SECRET, algorithms=["HS256"])
+        # payload contains: {"user_id": ..., "company_id": ..., "exp": ...}
+        return payload, None, None
+
+    except jwt.ExpiredSignatureError:
+        return None, jsonify({"error": "Token expired"}), 401
+
+    except jwt.InvalidTokenError:
+        return None, jsonify({"error": "Invalid token"}), 401

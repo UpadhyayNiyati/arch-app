@@ -1,6 +1,6 @@
 import time
 from flask import Blueprint , jsonify , request , url_for
-from models import User , db , OtpCode , ProjectAssignments , Clients , Projects , Tasks , Projectvendor , Vendors , Boards ,Pin , ProjectTemplates , Templates , Role , UserToken , UserRole
+from models import User , db , OtpCode , ProjectAssignments , Clients , Projects , Tasks , Projectvendor , Vendors , Boards ,Pin , ProjectTemplates , Templates , Role , UserToken , UserRole , Invite , Company
 from flask_jwt_extended import jwt_required , create_access_token , get_jwt_identity  , create_refresh_token , get_jwt, decode_token
 from flask_migrate import Migrate
 import uuid
@@ -242,11 +242,22 @@ def update_user(user_id):
 @user_bp.route('/delete_user/<string:user_id>', methods=['DELETE'])
 def del_user(user_id):
     try:
+
+        data = request.get_json()
+        user_password = data.get("user_password")
+
+        if not user_password:
+            return jsonify({"error": "Password is required"}), 400
         user = User.query.get_or_404(user_id)
 
         # DELETE CHILD RECORDS FIRST
         UserToken.query.filter_by(user_id=user_id).delete()
         OtpCode.query.filter_by(user_id=user_id).delete()   # <-- ADD THIS
+        Invite.query.filter_by(created_by_user_id=user.user_id).delete()  # <-- ADD THIS IF INVITE MODEL IS IMPORTED
+        Tasks.query.filter_by(assigned_to=user_id).delete()
+        UserRole.query.filter_by(user_id=user_id).delete()
+        Role.query.filter_by(role_id=user.role_id).delete()
+        # Company.query.filter_by(company_id=company_id).delete()
 
         db.session.delete(user)
         db.session.commit()
@@ -642,4 +653,168 @@ def create_role():
         return jsonify({"error": str(e)}), 500
     
 
+# @user_bp.route('/get_users_by_company/<string:company_id>', methods = ['GET'])
+# def get_users_by_company_id(company_id):
+#     """
+#     Get All Users by Company ID with their Roles
+#     ---
+#     tags:
+#       - User Management
+#     parameters:
+#       - name: company_id
+#         in: path
+#         type: string
+#         required: true
+#         description: The UUID of the company to filter users by.
+#     responses:
+#       200:
+#         description: A list of all user records for the given company, including their assigned role name.
+#       404:
+#         description: No users found for the provided company ID.
+#       500:
+#         description: Server error occurred during retrieval.
+#     """
+#     try:
+#         # 1. Query: Select User and join with Role, filtering by company_id
+#         users_with_roles = db.session.query(User, Role)\
+#             .join(Role, User.role_id == Role.role_id)\
+#             .filter(User.company_id == company_id)\
+#             .all()
 
+#         if not users_with_roles:
+#             return jsonify({"message": f"No users found for company ID: {company_id}"}), 404
+
+#         result = []
+#         # for user, role in users_with_roles:
+#         for user in 
+#             # Construct the user dictionary, including role information
+#             result.append({
+#                 'user_id': user.user_id,
+#                 'user_name': user.user_name,
+#                 'user_email': user.user_email,
+#                 'user_address': user.user_address,
+#                 'created_at': user.created_at.isoformat() if user.created_at else None,
+#                 # 'role_id': user.role_id,
+#                 # 'role_name': role.role_name,
+#                 'company_id': user.company_id
+#                 # NOTE: user_password is intentionally excluded for security.
+#             })
+
+#         return jsonify(result), 200
+
+#     except Exception as e:
+#         # In case of an error (e.g., database connection issue)
+#         return jsonify({"error": str(e)}), 500
+
+
+@user_bp.route('/get_users_by_company/<string:company_id>', methods=['GET'])
+def get_users_by_company_id(company_id):
+    """
+    Get All Users by Company ID
+    ---
+    tags:
+      - User Management
+    parameters:
+      - name: company_id
+        in: path
+        type: string
+        required: true
+        description: The UUID of the company to filter users by.
+    responses:
+      200:
+        description: A list of all users for the given company.
+      404:
+        description: No users found for the provided company ID.
+      500:
+        description: Server error occurred during retrieval.
+    """
+    try:
+        # Fetch all users belonging to the company
+        users = User.query.filter_by(company_id=company_id).all()
+
+        if not users:
+            return jsonify({"message": f"No users found for company ID: {company_id}"}), 404
+
+        result = []
+        for user in users:
+            result.append({
+                "user_id": user.user_id,
+                "user_name": user.user_name,
+                "user_email": user.user_email,
+                "user_address": user.user_address,
+                "company_id": user.company_id,
+                "created_at": user.created_at.isoformat() if user.created_at else None
+                # Note: Password is intentionally not returned
+            })
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+
+@user_bp.route('/get_users_by_company_with_role/<string:company_id>', methods=['GET'])
+def get_users_by_company_id_with_role(company_id):
+    """
+    Get all users for a company with their roles.
+    """
+    try:
+        # Join User, UserRole, Role
+        users = (
+            db.session.query(User)
+            .filter(User.company_id == company_id)
+            .all()
+        )
+
+        if not users:
+            return jsonify({"message": f"No users found for company ID: {company_id}"}), 404
+
+        result = []
+
+        for user in users:
+            # Fetch roles from UserRole table
+            user_roles = (
+                db.session.query(Role.role_name)
+                .join(UserRole, Role.role_id == UserRole.role_id)
+                .filter(UserRole.user_id == user.user_id,
+                        UserRole.company_id == company_id)
+                .all()
+            )
+
+            role_names = [r.role_name for r in user_roles]
+
+            result.append({
+                "user_id": user.user_id,
+                "user_name": user.user_name,
+                "user_email": user.user_email,
+                "user_address": user.user_address,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+                "company_id": user.company_id,
+                "roles": role_names
+            })
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+
+@user_bp.route("/assign_role", methods=["POST"])
+def assign_role():
+    data = request.json
+    user_id = data.get("user_id")
+    role_id = data.get("role_id")
+
+    if not user_id or not role_id:
+        return jsonify({"error": "user_id and role_id required"}), 400
+
+    # Check if user already has this role
+    existing = UserRole.query.filter_by(user_id=user_id, role_id=role_id).first()
+    if existing:
+        return jsonify({"message": "Role already assigned"}), 200
+
+    new_role = UserRole(user_id=user_id, role_id=role_id)
+    db.session.add(new_role)
+    db.session.commit()
+
+    return jsonify({"message": "Role assigned successfully"}), 201

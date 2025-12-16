@@ -1,5 +1,5 @@
 from flask import Blueprint , jsonify , request , current_app
-from models import db , Inspiration , Upload_Files , User
+from models import db , Inspiration , Upload_Files , User , Pin , Boards , Pinterest
 from .upload_files_routes import upload_inspiration_files , update_inspiration_files
 from flask_jwt_extended import jwt_required , get_jwt_identity , create_access_token , create_refresh_token
 import logging
@@ -61,6 +61,66 @@ def _serialize_inspiration(inspiration):
             "file_size": file.file_size
         })
     return insp_dict
+
+def _serialize_pin(pin, board_name):
+    """Helper function to serialize a PinterestPin object."""
+    return {
+        "pin_id": pin.pin_id,
+        "board_name": board_name,
+        "image_url": pin.image_url,
+        "title": pin.title,
+        "link": pin.link
+    }
+
+
+@inspiration_bp.route('/get/all_pins_and_inspirations', methods=['GET'])
+@jwt_required
+def get_all_pins_and_inspirations():
+    """
+    Retrieve All User's Saved Pins and All Inspirations
+    ---
+    tags:
+      - Inspirations
+      - Pins
+    responses:
+      200:
+        description: A list of all pins and a list of all inspiration records.
+    """
+    try:
+        # --- 1. Get User ID (Assuming current_user_id is available in the request context after jwt_required) ---
+        # The user ID logic needs to be consistent with your 'jwt_required' implementation.
+        # Assuming your custom 'jwt_required' sets 'request.current_user_id'
+        user_id = request.current_user_id # Using the method implied by your original Pinterest route
+
+        # --- 2. Fetch User's Pins (from original Pinterest route logic) ---
+        all_pins = []
+        boards = Boards.query.filter_by(user_id=user_id).all()
+        
+        for board in boards:
+            pins = Pin.query.filter_by(board_id=board.board_id).all()
+            for pin in pins:
+                all_pins.append(_serialize_pin(pin, board.board_name))
+
+        # --- 3. Fetch All Inspirations (from original /get logic) ---
+        all_inspirations = []
+        inspirations = Inspiration.query.all()
+
+        for insp in inspirations:
+            all_inspirations.append(_serialize_inspiration(insp))
+
+        # --- 4. Combine and Return ---
+        return jsonify({
+            "pins": all_pins,
+            "inspirations": all_inspirations
+        }), 200
+
+    except AttributeError:
+         # This usually means request.current_user_id wasn't set by your custom jwt_required
+        return jsonify({"error": "Authentication failed or user ID not found."}), 401
+    except Exception as e:
+        current_app.logger.error(f"Error retrieving pins and inspirations: {e}")
+        return jsonify({"error": "Failed to retrieve data: " + str(e)}), 500
+    
 
 @inspiration_bp.route('/get', methods=['GET'])
 @jwt_required
@@ -341,13 +401,23 @@ def create_inspiration():
     if not has_uploaded_files and not has_url:
         return jsonify({"error": "Must provide either file attachments (uploads) OR an external URL."}), 400
     
+    input_space_id = data.get('space_id')
+    input_title = data.get('title')
+    input_description = data.get('description')
+    input_tags = data.get('tags')
+    
     
     # 3. Source Processing: Consolidate all images (uploads + download) into one list
     files_to_process = []
+    processed_file_info = []
     # message_detail = "File uploaded" # Default message
 
     if has_uploaded_files:
         files_to_process.extend(attachments)
+        processed_file_info.extend([
+            {"filename": f.filename, "source": "upload", "mime_type": f.mimetype} 
+            for f in attachments if f.filename
+        ])
     
     if has_url:
         downloaded_file = download_url_to_filestorage(
@@ -356,9 +426,18 @@ def create_inspiration():
         )
         if downloaded_file:
             files_to_process.append(downloaded_file)
-            # message_detail = f"URL downloaded and stored ({external_url})"
+            processed_file_info.append({
+                "filename": downloaded_file.filename, 
+                "source": "url", 
+                "url": external_url,
+                "mime_type": downloaded_file.mimetype
+            })
         else:
             return jsonify({"error": "Failed to download image from the provided URL."}), 400
+        #     files_to_process.append(downloaded_file)
+        #     # message_detail = f"URL downloaded and stored ({external_url})"
+        # else:
+        #     return jsonify({"error": "Failed to download image from the provided URL."}), 400
 
     # 2. FIX TAGS DATA TYPE: Form data comes as strings.
     # If the database expects a comma-separated string, we can use the form data directly.
@@ -366,11 +445,10 @@ def create_inspiration():
     
     # 3. FIX MODEL: 'url' is assumed to be nullable since it's not provided
     new_inspiration = Inspiration(
-        space_id = data.get('space_id'),
-        title = data.get('title'),
-        # url is omitted, requires DB schema to be nullable
-        description=data.get('description'),
-        tags=tags_str
+        space_id=input_space_id,
+        title=input_title,
+        description=input_description,
+        tags=input_tags
     )
 
     try:
@@ -389,7 +467,12 @@ def create_inspiration():
         return jsonify({
             "message": "Inspiration and file uploaded successfully",
             "inspiration_id": new_inspiration.inspiration_id,
-            "file_location": f"Processed {len(attachments)} file(s)"
+            "title": input_title,
+            "description": input_description,
+            "attachments": processed_file_info,
+            "created_at": new_inspiration.created_at.isoformat() if hasattr(new_inspiration, 'created_at') else None,
+            # "file_location": f"Processed {len(attachments)} file(s)",
+            "space_id": input_space_id,
         }), 201
         
     except IntegrityError:
@@ -881,3 +964,487 @@ def delete_inspirations_by_space_id(space_id):
         # Log the error for debugging
         # current_app.logger.error(f"Error deleting inspirations in space {space_id}: {e}", exc_info=True)
         return jsonify({"error": f"A server error occurred during deletion: {str(e)}"}), 500
+    
+
+# @inspiration_bp.route('/inspiration/<company_id>', methods=['GET'])
+# @jwt_required
+# def get_board_pins(company_id):
+#     board_entry = Boards.query.filter_by(company_id=company_id).first()
+
+#     if not board_entry:
+#         return jsonify({"error": "No board saved"}), 404
+
+#     board_id = board_entry.board_id
+#     token = board_entry.access_token
+
+#     # Pinterest API endpoint
+#     api_url = f"https://api.pinterest.com/v5/boards/{board_id}/pins"
+
+#     headers = {
+#         "Authorization": f"Bearer {token}"
+#     }
+
+#     response = requests.get(api_url, headers=headers)
+
+#     if response.status_code != 200:
+#         return jsonify({"error": "Failed to fetch pins"}), 400
+
+#     pins = response.json()
+
+#     return jsonify({
+#         "board_id": board_id,
+#         "board_name": board_entry.board_name,
+#         "pins": pins   # Return pins directly
+#     }), 200
+
+
+# @inspiration_bp.route('/inspiration', methods=['GET'])
+# @jwt_required
+# def get_board_pins():
+#     # 🔐 Get company_id from backend JWT
+#     company_id = request.current_company_id
+
+#     # 📌 Fetch saved board
+#     board_entry = Boards.query.filter_by(company_id=company_id).first()
+#     if not board_entry:
+#         return jsonify({"error": "No board saved"}), 404
+
+#     # 🔑 Fetch Pinterest token from DB
+#     pinterest_auth = Pinterest.query.filter_by(company_id=company_id).first()
+#     if not pinterest_auth:
+#         return jsonify({"error": "Pinterest not connected"}), 403
+
+#     pinterest_token = pinterest_auth.access_token
+
+#     api_url = f"https://api.pinterest.com/v5/boards/{board_entry.board_id}/pins"
+#     headers = {
+#         "Authorization": f"Bearer {pinterest_token}"
+#     }
+
+#     response = requests.get(api_url, headers=headers)
+
+#     if response.status_code != 200:
+#         return jsonify({
+#             "error": "Failed to fetch pins",
+#             "details": response.json()
+#         }), response.status_code
+
+#     return jsonify({
+#         "board_id": board_entry.board_id,
+#         "board_name": board_entry.board_name,
+#         "pins": response.json().get("items", [])
+#     }), 200
+
+
+import requests
+from flask import jsonify, request
+
+# Assuming 'Boards', 'Pinterest', and 'jwt_required' are imported correctly
+# from your application/extensions.
+# from your_models import Boards, Pinterest
+# from your_extensions import jwt_required
+
+# --- API Endpoint Definition ---
+
+import requests
+from flask import jsonify, request
+
+# Assuming 'Boards', 'Pinterest', and 'jwt_required' are imported correctly
+# from your application/extensions.
+# from your_models import Boards, Pinterest
+# from your_extensions import jwt_required
+
+# --- API Endpoint Definition ---
+
+@inspiration_bp.route('/inspiration', methods=['GET'])
+@jwt_required
+def get_board_pins():
+    # 🔐 Get company_id from backend JWT
+    # Assumes request.current_company_id is set by jwt_required
+    company_id = request.current_company_id
+
+    # 1. 📌 Fetch saved board details from local DB
+    board_entry = Boards.query.filter_by(company_id=company_id).first()
+    if not board_entry:
+        return jsonify({"error": "No inspiration board saved in our system."}), 404
+    
+    local_board_id = getattr(board_entry, 'id', None)
+    project_id = board_entry.project_id
+    space_id = board_entry.space_id
+    inspiration_id = board_entry.inspiration_id
+
+    # 2. 🔑 Fetch Pinterest token from local DB
+    pinterest_auth = Pinterest.query.filter_by(company_id=company_id).first()
+    if not pinterest_auth or not pinterest_auth.access_token:
+        return jsonify({"error": "Pinterest account not connected or token missing."}), 403
+
+    pinterest_token = pinterest_auth.access_token
+    
+    # 🌟 CHANGE APPLIED HERE: Using the new field 'pinterest_board_id' from the board_entry object
+    # This ID is the one used in the Pinterest API URL.
+    pinterest_board_id = board_entry.pinterest_board_id 
+    
+    if not pinterest_board_id:
+         return jsonify({"error": "Pinterest board ID is missing in the database entry."}), 500
+
+    # 3. 📤 Call Pinterest API
+    # 🌟 CHANGE APPLIED HERE: Using the new variable name 'pinterest_board_id'
+    api_url = f"https://api.pinterest.com/v5/boards/{pinterest_board_id}/pins"
+    headers = {
+        "Authorization": f"Bearer {pinterest_token}",
+        "Accept": "application/json"
+    }
+
+    try:
+        response = requests.get(api_url, headers=headers)
+        response.raise_for_status() # Raises an HTTPError for bad responses (4xx or 5xx)
+
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code
+        try:
+            error_details = e.response.json()
+        except requests.exceptions.JSONDecodeError:
+            # Fallback for non-JSON error response
+            error_details = {"message": e.response.text}
+
+        # 4. ❌ Handle Pinterest API Errors
+        # Specifically target the 404/403 errors that cause the "Board not found"
+        return jsonify({
+            "error": "Failed to fetch pins from Pinterest API.",
+            "http_status_code": status_code,
+            "api_details": error_details,
+            "note": "A 'Board not found' error often means the board ID is invalid or inaccessible (e.g., deleted, private, or the wrong format - ensure it is the correct numeric/UUID Pinterest ID)."
+        }), status_code
+    
+    except requests.exceptions.RequestException as e:
+        # Handle network issues, timeouts, etc.
+        return jsonify({
+            "error": "Network or connection error while connecting to Pinterest.",
+            "details": str(e)
+        }), 500
+
+
+    # 5. ✅ Success Response
+    pinterest_data = response.json()
+    return jsonify({
+        # 🌟 CHANGE APPLIED HERE: Returning 'pinterest_board_id' in the response
+        "inspiration_id": local_board_id,
+        "project_id":project_id , 
+        "space_id":space_id , 
+        "local_board_id": local_board_id,
+        "pinterest_board_id": board_entry.pinterest_board_id, 
+        "board_name": board_entry.board_name, # Assuming this is still correct
+        "pins": pinterest_data.get("items", []),
+        "bookmark": pinterest_data.get("bookmark") # Include bookmark for pagination if needed
+    }), 200
+
+# --- End of API Endpoint Definition ---
+
+# --- End of API Endpoint Definition ---
+
+
+# @inspiration_bp.route('/save-board', methods=['POST'])
+# @jwt_required
+# def save_board():
+#     data = request.get_json()
+
+#     company_id = data.get("company_id")
+#     board_id = data.get("board_id")
+#     board_name = data.get("board_name")
+
+#     # 🔐 Get access token from Authorization header
+#     auth_header = request.headers.get("Authorization")
+
+#     if not auth_header:
+#         return jsonify({"error": "Authorization header missing"}), 400
+
+#     if not auth_header.startswith("Bearer "):
+#         return jsonify({"error": "Invalid Authorization header format"}), 400
+
+#     access_token = auth_header.split(" ")[1]
+
+#     if not all([company_id, board_id, board_name]):
+#         return jsonify({"error": "Missing required fields"}), 400
+
+#     entry = Boards(
+#         company_id=company_id,
+#         board_id=board_id,
+#         board_name=board_name,
+#         access_token=access_token
+#     )
+
+#     db.session.add(entry)
+#     db.session.commit()
+
+#     return jsonify({"message": "Board saved successfully"}), 201
+
+
+
+
+@inspiration_bp.route('/save-board', methods=['POST'])
+@jwt_required
+def save_board():
+    data = request.get_json()
+
+    pinterest_board_id = data.get("pinterest_board_id")
+    board_name = data.get("board_name")
+    project_id = data.get("project_id")
+    inspiration_id = data.get("inspiration_id")
+    space_id = data.get("space_id")
+
+
+    if not all([pinterest_board_id]):
+        return jsonify({"error": "Missing required fields"}), 400
+
+    # 🔐 Get company_id directly from JWT
+    # user_id = request.current_user_id
+    company_id = request.current_company_id
+
+    entry = Boards(
+        company_id=company_id,
+        pinterest_board_id=pinterest_board_id,
+        board_name=board_name,
+        project_id=project_id,
+        inspiration_id=inspiration_id,
+        space_id=space_id,
+    )
+
+    db.session.add(entry)
+    db.session.commit()
+
+    new_board_id = entry.board_id
+    
+    # Check if the board_id field exists and was populated (assuming it's named 'board_id' on the model)
+    if not new_board_id:
+        return jsonify({"error": "Failed to retrieve the generated board ID after save."}), 500
+
+    return jsonify({"message": "Board saved successfully" , 
+                    "company_id":company_id,
+                    "board_id": new_board_id,
+                    "pinterest_board_id":pinterest_board_id,
+                    "board_name" : board_name,
+                    "space_id":space_id,
+                    "inspiration_id":inspiration_id,
+                    "project_id":project_id
+                    }), 201
+
+
+
+@inspiration_bp.route('/inspiration/<string:inspiration_id>', methods=['GET'])
+@jwt_required
+def get_board_pins_by_id(inspiration_id):
+    # 🔐 Get company_id from backend JWT
+    company_id = request.current_company_id
+
+    # 1. 📌 Fetch saved board details from local DB
+    board_entry = Boards.query.filter_by(inspiration_id=inspiration_id, company_id=company_id).first()
+    
+    if not board_entry:
+        return jsonify({"error": f"Inspiration board with ID '{inspiration_id}' not found for this company."}), 404
+    
+    # 🔑 Get contextual IDs (as requested in the previous query)
+    project_id = board_entry.project_id
+    space_id = board_entry.space_id
+
+    # 2. 🔑 Fetch Pinterest token from local DB
+    pinterest_auth = Pinterest.query.filter_by(company_id=company_id).first()
+    if not pinterest_auth or not pinterest_auth.access_token:
+        return jsonify({"error": "Pinterest account not connected or token missing."}), 403
+
+    pinterest_token = pinterest_auth.access_token
+    pinterest_board_id = board_entry.pinterest_board_id 
+    
+    if not pinterest_board_id:
+         return jsonify({"error": "Pinterest board ID is missing in the database entry."}), 500
+
+    # 3. 📤 Call Pinterest API
+    api_url = f"https://api.pinterest.com/v5/boards/{pinterest_board_id}/pins"
+    headers = {
+        "Authorization": f"Bearer {pinterest_token}",
+        "Accept": "application/json"
+    }
+
+    try:
+        # The 'response' object is defined here
+        response = requests.get(api_url, headers=headers)
+        response.raise_for_status() # Check for HTTP errors (4xx/5xx)
+
+        # 5. ✅ Success Response (Move success logic here, inside the try block)
+        pinterest_data = response.json()
+        
+        return jsonify({
+            # Contextual IDs
+            "inspiration_id": inspiration_id,
+            "project_id": project_id, # Added back
+            "space_id": space_id, # Added back
+            
+            # Pinterest Data
+            "pinterest_board_id": board_entry.pinterest_board_id, 
+            "board_name": board_entry.board_name,
+            "pins": pinterest_data.get("items", []),
+            "bookmark": pinterest_data.get("bookmark")
+        }), 200
+
+    except requests.exceptions.HTTPError as e:
+        # 4. ❌ Handle Pinterest API HTTP Errors
+        status_code = e.response.status_code
+        try:
+            error_details = e.response.json()
+        except requests.exceptions.JSONDecodeError:
+            error_details = {"message": e.response.text}
+
+        return jsonify({
+            "error": "Failed to fetch pins from Pinterest API.",
+            "http_status_code": status_code,
+            "api_details": error_details,
+            "note": "Board not found or inaccessible."
+        }), status_code
+    
+    except requests.exceptions.RequestException as e:
+        # Handle network issues, timeouts, etc.
+        return jsonify({
+            "error": "Network or connection error while connecting to Pinterest.",
+            "details": str(e)
+        }), 500
+
+    # No need for any code here, as the try/except blocks handle all returns.
+
+
+
+# @inspiration_bp.route('/api/inspiration/space/<string:space_id>', methods=['GET'])
+# @jwt_required
+# def get_board_pins_by_space_id(space_id):
+#     # 🔐 Get company_id from backend JWT
+#     company_id = request.current_company_id
+
+#     # 1. 📌 Fetch board using space_id instead of inspiration_id
+#     board_entries = Boards.query.filter_by(
+#         space_id=space_id,
+#         #company_id=company_id
+#     ).all()
+
+#     if not board_entries:
+#         return jsonify({
+#             "error": f"Inspiration board not found for space_id '{space_id}' in this company."
+#         }), 404
+
+#     # 🔑 Contextual IDs (same as original output)
+#     inspiration_id = board_entries.inspiration_id
+#     project_id = board_entries.project_id
+
+#     # 2. 🔑 Fetch Pinterest token
+#     pinterest_auth = Pinterest.query.filter_by(company_id=company_id).first()
+#     if not pinterest_auth or not pinterest_auth.access_token:
+#         return jsonify({
+#             "error": "Pinterest account not connected or token missing."
+#         }), 403
+
+#     pinterest_token = pinterest_auth.access_token
+#     pinterest_board_id = board_entries.pinterest_board_id
+
+#     if not pinterest_board_id:
+#         return jsonify({
+#             "error": "Pinterest board ID is missing in the database entry."
+#         }), 500
+
+#     # 3. 📤 Call Pinterest API
+#     api_url = f"https://api.pinterest.com/v5/boards/{pinterest_board_id}/pins"
+#     headers = {
+#         "Authorization": f"Bearer {pinterest_token}",
+#         "Accept": "application/json"
+#     }
+
+#     try:
+#         response = requests.get(api_url, headers=headers)
+#         response.raise_for_status()
+
+#         pinterest_data = response.json()
+
+#         # 4. ✅ Success response (SAME FORMAT AS ORIGINAL)
+#         return jsonify({
+#             "inspiration_id": inspiration_id,
+#             "project_id": project_id,
+#             "space_id": space_id,
+
+#             "pinterest_board_id": pinterest_board_id,
+#             "board_name": board_entries.board_name,
+#             "pins": pinterest_data.get("items", []),
+#             "bookmark": pinterest_data.get("bookmark")
+#         }), 200
+
+#     except requests.exceptions.HTTPError as e:
+#         status_code = e.response.status_code
+#         try:
+#             error_details = e.response.json()
+#         except Exception:
+#             error_details = {"message": e.response.text}
+
+#         return jsonify({
+#             "error": "Failed to fetch pins from Pinterest API.",
+#             "http_status_code": status_code,
+#             "api_details": error_details,
+#             "note": "Board not found or inaccessible."
+#         }), status_code
+
+#     except requests.exceptions.RequestException as e:
+#         return jsonify({
+#             "error": "Network or connection error while connecting to Pinterest.",
+#             "details": str(e)
+#         }), 500
+
+
+@inspiration_bp.route('/api/inspiration/space/<string:space_id>', methods=['GET'])
+@jwt_required
+def get_board_pins_by_space_id(space_id):
+    company_id = request.current_company_id
+
+    board_entries = Boards.query.filter_by(
+        space_id=space_id,
+        # company_id=company_id
+    ).all()
+    
+
+    if not board_entries:
+        return jsonify({
+            "error": "No boards found for this space."
+        }), 404
+
+    pinterest_auth = Pinterest.query.filter_by(company_id=company_id).first()
+    if not pinterest_auth or not pinterest_auth.access_token:
+        return jsonify({
+            "error": "Pinterest account not connected."
+        }), 403
+
+    headers = {
+        "Authorization": f"Bearer {pinterest_auth.access_token}",
+        "Accept": "application/json"
+    }
+
+    results = []
+
+    for board in board_entries:
+        if not board.pinterest_board_id:
+            continue
+
+        pins_url = f"https://api.pinterest.com/v5/boards/{board.pinterest_board_id}/pins"
+        response = requests.get(pins_url, headers=headers)
+
+        if response.status_code != 200:
+            continue
+
+        pinterest_data = response.json()
+
+        results.append({
+            "inspiration_id": board.inspiration_id,
+            "project_id": board.project_id,
+            "space_id": space_id,
+            "pinterest_board_id": board.pinterest_board_id,
+            "board_name": board.board_name,
+            "pins": pinterest_data.get("items", []),
+            "bookmark": pinterest_data.get("bookmark")
+        })
+
+    return jsonify({
+        "space_id": space_id,
+        "boards": results
+    }), 200

@@ -1,15 +1,16 @@
 from flask import Blueprint, request, jsonify, current_app
-from models import db, Spaces , Upload_Files , Drawings , Preset , Projects ,  Tasks
+from models import db, Spaces , Upload_Files , Drawings , Preset , Projects ,  Tasks , PresetSpace
 from .upload_files_routes import upload_space_files
 import logging
 import os
 from flask_cors import CORS
 from sqlalchemy.orm.exc import NoResultFound
-from flask_jwt_extended import jwt_required , get_jwt_identity , create_access_token , create_refresh_token
+# from flask_jwt_extended import jwt_required , get_jwt_identity , create_access_token , create_refresh_token
 import json
 from sqlalchemy import distinct, func
 from auth.auth import jwt_required
 from utils.email_utils import send_email
+from auth.authhelpers import jwt_required
 
 spaces_bp = Blueprint('Spaces' , __name__)
 CORS(spaces_bp)
@@ -150,7 +151,7 @@ def get_space_by_id(space_id):
 
 
 @spaces_bp.route('/post', methods=['POST'])
-@jwt_required
+# @jwt_required
 def create_space():
     """
     Create New Space
@@ -246,11 +247,11 @@ def create_space():
         # db.session.commit()
         upload_space_files(attachments , new_space.space_id)
         db.session.commit()
-        return jsonify({
-            "message": "Space created successfully", 
-            "space_id": new_space.space_id,
-            "file_location": f"Processed {len(attachments)} file(s)"
-        }), 201
+        return jsonify(
+            # "message": "Space created successfully", 
+            # "space_id": new_space.space_id,
+            # "file_location": f"Processed {len(attachments)} file(s)"
+        serialize_space(new_space)), 201
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Error creating drawing: {e}")
@@ -340,7 +341,8 @@ def update_space(space_id):
         space.category = data.get('category', space.category)
         space.status = data.get('status', space.status)
         db.session.commit()
-        return jsonify({"message": "Space updated successfully"}), 200
+        return jsonify(serialize_space(space)), 200
+        # return jsonify({"message": "Space updated successfully"}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": "Failed to update space"}), 500
@@ -468,8 +470,9 @@ def update_space_by_project_id_with_files(project_id):
             upload_space_files(attachments, space.space_id)
         
         db.session.commit()
+        return jsonify(serialize_space(space)), 200
         
-        return jsonify({"message": f"Space {space_id_to_update} updated successfully in project {project_id}"}), 200
+        # return jsonify({"message": f"Space {space_id_to_update} updated successfully in project {project_id}"}), 200
 
     except json.JSONDecodeError:
         db.session.rollback()
@@ -718,14 +721,16 @@ def create_spaces_bulk():
         db.session.commit() 
         
         # 3. NOW build the response list using the generated IDs
-        created_spaces = []
-        for space_obj in new_space_objects:
-             created_spaces.append({
-                 "space_id": space_obj.space_id,  # <-- ID is available here
-                 "space_name": space_obj.space_name
-             })
-             
+        created_spaces = [serialize_space(space_obj) for space_obj in new_space_objects]
         return jsonify({"created_spaces": created_spaces}), 201
+        # created_spaces = []
+        # for space_obj in new_space_objects:
+        #      created_spaces.append({
+        #          "space_id": space_obj.space_id,  # <-- ID is available here
+        #          "space_name": space_obj.space_name
+        #      })
+             
+        # return jsonify({"created_spaces": created_spaces}), 201
 
     except Exception as e:
         db.session.rollback()
@@ -749,6 +754,7 @@ def duplicate_spaces_to_project():
             return jsonify({"message": "No spaces found for the source project"}), 404
 
         # Duplicate each space into the target project
+        duplicated_spaces = []
         for space in source_spaces:
             new_space = Spaces(
                 project_id=target_project_id,
@@ -761,8 +767,14 @@ def duplicate_spaces_to_project():
 
         db.session.commit()
 
+        serialized_duplicates = [serialize_space(space_obj) for space_obj in duplicated_spaces]
+
         return jsonify({"message": "Spaces duplicated successfully to target project",
-                        "count": len(source_spaces)}), 201
+                        "count": len(serialized_duplicates),
+                        "created_spaces": serialized_duplicates}), 201
+
+        # return jsonify({"message": "Spaces duplicated successfully to target project",
+        #                 "count": len(source_spaces)}), 201
 
     except Exception as e:
         db.session.rollback()
@@ -803,6 +815,7 @@ def apply_template_to_project():
             # 3. Create a new Space record for the target project
             # NOTE: Since we only have the name (blueprint), we use default/derived values 
             # for description, type, and status.
+
             new_space = Spaces(
                 project_id=project_id,
                 space_name=space_name_to_clone,
@@ -816,17 +829,115 @@ def apply_template_to_project():
 
         db.session.commit()
 
+        serialized_created_spaces = [serialize_space(space_obj) for space_obj in created_spaces]
+
         return jsonify({
             "message": "Template applied successfully. New spaces created.",
             "project_id": project_id,
-            "created_spaces_count": len(created_spaces),
-            "created_space_names": created_spaces
+            "created_spaces_count": len(serialized_created_spaces),
+            "created_spaces": serialized_created_spaces
         }), 201
+
+        # return jsonify({
+        #     "message": "Template applied successfully. New spaces created.",
+        #     "project_id": project_id,
+        #     "created_spaces_count": len(created_spaces),
+        #     "created_space_names": created_spaces
+        # }), 201
 
     except Exception as e:
         db.session.rollback()
         # Ensure current_app.logger is imported/available if you use it, or just use print/logging
         return jsonify({"message": "Internal Server Error", "error": str(e)}), 500
+
+# @spaces_bp.route('/projects/<project_id>/apply-preset', methods=['POST'])
+# @jwt_required
+# def apply_preset_to_project(project_id):
+#     data = request.get_json()
+#     preset_id = data.get("preset_id")
+
+#     if not preset_id:
+#         return jsonify({"error": "preset_id is required"}), 400
+
+#     # Fetch project
+#     project = Projects.query.filter_by(project_id=project_id).first()
+#     if not project:
+#         return jsonify({"error": "Project not found"}), 404
+
+#     # Fetch preset
+#     preset = Preset.query.filter_by(preset_id=preset_id).first()
+#     if not preset:
+#         return jsonify({"error": "Preset not found"}), 404
+
+#     # Apply preset to project
+#     project.preset_id = preset_id
+
+#     # Create a new space based on the preset
+#     new_space = Spaces(
+#         project_id=project.project_id,
+#         preset_id=preset.preset_id,
+#         space_name=preset.preset_name,              # you can customize this
+#         description=preset.preset_description,      # optional
+#         space_type=preset.preset_type,             # from preset_type
+#         category="Preset"                           # categorize as preset-generated
+#     )
+
+#     db.session.add(new_space)
+#     db.session.commit()
+
+#     return jsonify(serialize_space(new_space)), 201
+
+    # return jsonify({
+    #     "message": "Preset applied and space generated successfully",
+    #     "project_id": project_id,
+    #     "preset_id": preset_id,
+    #     "generated_space_id": new_space.space_id
+    # }), 200
+
+# @spaces_bp.route('/projects/<project_id>/apply-preset', methods=['POST'])
+# @jwt_required
+# def apply_preset_to_project(project_id):
+#     data = request.get_json()
+#     preset_id = data.get("preset_id")
+
+#     if not preset_id:
+#         return jsonify({"error": "preset_id is required"}), 400
+
+#     # Fetch project
+#     project = Projects.query.filter_by(project_id=project_id).first()
+#     if not project:
+#         return jsonify({"error": "Project not found"}), 404
+
+#     # Fetch preset
+#     preset = Preset.query.filter_by(preset_id=preset_id).first()
+#     if not preset:
+#         return jsonify({"error": "Preset not found"}), 404
+
+#     # Fetch all preset spaces
+#     preset_spaces = PresetSpace.query.filter_by(preset_id=preset_id).all()
+
+#     if not preset_spaces:
+#         return jsonify({"error": "This preset has no spaces defined"}), 400
+
+#     created_spaces = []
+
+#     # Create each space
+#     for ps in preset_spaces:
+#         new_space = Spaces(
+#             project_id=project.project_id,
+#             preset_id=preset.preset_id,
+#             space_name=ps.space_name,
+#             description=ps.description,
+#             space_type=ps.space_type,
+#             category="Preset"
+#         )
+#         db.session.add(new_space)
+#         created_spaces.append(new_space)
+
+#     db.session.commit()
+
+#     # Return all created spaces
+#     return jsonify([serialize_space(s) for s in created_spaces]), 201
 
 @spaces_bp.route('/projects/<project_id>/apply-preset', methods=['POST'])
 @jwt_required
@@ -847,28 +958,28 @@ def apply_preset_to_project(project_id):
     if not preset:
         return jsonify({"error": "Preset not found"}), 404
 
-    # Apply preset to project
-    project.preset_id = preset_id
+    # Fetch all spaces from the preset
+    preset_spaces = PresetSpace.query.filter_by(preset_id=preset_id).all()
+    if not preset_spaces:
+        return jsonify({"error": "No spaces found in preset"}), 404
 
-    # Create a new space based on the preset
-    new_space = Spaces(
-        project_id=project.project_id,
-        preset_id=preset.preset_id,
-        space_name=preset.preset_name,              # you can customize this
-        description=preset.preset_description,      # optional
-        space_type=preset.preset_type,             # from preset_type
-        category="Preset"                           # categorize as preset-generated
-    )
+    created_spaces = []
+    for ps in preset_spaces:
+        new_space = Spaces(
+            project_id=project_id,
+            space_name=ps.space_name,
+            space_type=ps.space_type
+        )
+        db.session.add(new_space)
+        created_spaces.append(new_space.space_name)
 
-    db.session.add(new_space)
     db.session.commit()
 
     return jsonify({
-        "message": "Preset applied and space generated successfully",
-        "project_id": project_id,
-        "preset_id": preset_id,
-        "generated_space_id": new_space.space_id
+        "message": f"Preset applied successfully. {len(created_spaces)} spaces created.",
+        "created_spaces": created_spaces
     }), 200
+
 
 
 @spaces_bp.route('/delete/project/<string:project_id>', methods=['DELETE'])

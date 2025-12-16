@@ -525,6 +525,7 @@ def register_user():
         return jsonify({"message": "User  and registered. Please check your email for the OTP.",
                         "user_name": new_user.user_name , 
                         "user_id": new_user.user_id,
+                        "user_email": new_user.user_email,
                         "company_id": new_user.company_id,}), 201
     except Exception as e:
         db.session.rollback() 

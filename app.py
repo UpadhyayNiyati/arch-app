@@ -303,6 +303,9 @@ from routes.pinterest_routes import pinterest_bp
 from auth.auth import auth_bp
 from routes.user_roles_routes import user_roles_bp
 from routes.invite_routes import invite_bp
+from routes.permissions_routes import permissions_bp
+from routes.role_permissions_routes import role_permissions_bp
+from routes.preset_spaces_routes import preset_spaces_bp
 
 app.register_blueprint(teams_bp , url_prefix = "/api/teams")
 app.register_blueprint(roles_bp, url_prefix="/api/roles")
@@ -335,6 +338,9 @@ app.register_blueprint(pinterest_bp , url_prefix = '/api/pinterest')
 app.register_blueprint(auth_bp , url_prefix = '/api/auth')
 app.register_blueprint(invite_bp , url_prefix = '/api/invite')
 app.register_blueprint(user_roles_bp , url_prefix = '/api/user_roles')
+app.register_blueprint(permissions_bp , url_prefix = '/api/permissions')
+app.register_blueprint(role_permissions_bp , url_prefix = '/api/role_permissions')
+app.register_blueprint(preset_spaces_bp , url_prefix = '/api/preset_spaces')
 
 #create tables
 with app.app_context():
@@ -346,6 +352,8 @@ with app.app_context():
 # print(os.path.exists("uploads/inspiration_uploads/2a59677d-b072-4570-925c-255a85efe195/Screenshot_2025-01-21_155435.png"))
 
 # print(app.url_map)
+# for rule in app.url_map.iter_rules():
+#     print(rule)
 
 if __name__ == "__main__":
     app.run(debug = True)

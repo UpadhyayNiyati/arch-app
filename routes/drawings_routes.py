@@ -195,6 +195,9 @@ def update_drawing_by_id(drawing_id):
             "message": message,
             "drawing_id": drawing.drawing_id,
             "new_revision": drawing.revision_number,
+            "drawing_name": drawing.drawing_name,
+            "description": drawing.description,
+            "tags": drawing.tags,
             "files_added": len(attachments),
             "files_deleted": len(files_to_delete)
         }), 200
@@ -341,6 +344,9 @@ def update_drawing_by_space_id_handler(space_id):
             "message": message,
             "drawing_id": drawing.drawing_id,
             "new_revision": drawing.revision_number,
+            "drawing_name": drawing.drawing_name,
+            "description": drawing.description,
+            "tags": drawing.tags,
             "files_added": len(attachments),
             "files_deleted": len(files_to_delete)
         }), 200
@@ -392,6 +398,9 @@ def create_drawing():
         return jsonify({
             "message": "Drawing and file uploaded successfully", 
             "drawing_id": new_drawing.drawing_id,
+            "drawing_name": new_drawing.drawing_name,
+            "description": new_drawing.description,
+            "tags": new_drawing.tags,
             "file_location": f"Processed {len(attachments)} file(s)"
             }), 201
     except Exception as e:
@@ -515,6 +524,9 @@ def update_drawing_by_space_id(space_id):
             "message": message,
             "drawing_id": drawing.drawing_id,
             "new_revision": drawing.revision_number,
+            "drawing_name": drawing.drawing_name,
+            "description": drawing.description,
+            "tags": drawing.tags,
             "files_added": len(attachments),
             "files_deleted": len(files_to_delete)
         }), 200

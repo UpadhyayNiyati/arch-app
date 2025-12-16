@@ -56,6 +56,7 @@ def serialize_task(task):
         # 'date': task.date.isoformat() if isinstance(task.date, datetime.date) else str(task.date),
         'date': task.date.isoformat() if task.date else None,
         'due_date': task.due_date.isoformat()  if task.due_date else None,
+        'location':task.location,
         'space_id': getattr(task, 'space_id', None),
         'assigned_vendor': assigned_vendor_name,
         'completed_at': completed_at_iso, # Added for completeness

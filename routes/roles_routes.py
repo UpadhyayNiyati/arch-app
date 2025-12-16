@@ -82,3 +82,33 @@ def delete_role(role_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
+    
+
+@roles_bp.route('/api/get_role_permissions/<string:role_id>', methods=['GET'])
+def get_role_permissions(role_id):
+    """
+    Retrieves all permissions associated with a specific role ID.
+    """
+    try:
+        # 1️⃣ Fetch role
+        role = Role.query.get_or_404(role_id)
+
+        # 2️⃣ Traverse through RolePermission
+        permissions_data = []
+        for rp in role.role_permissions:
+            permission = rp.permission
+            if permission:
+                permissions_data.append({
+                    "permission_id": permission.permission_id,
+                    "permission_name": permission.permission_name
+                })
+
+        # 3️⃣ Response
+        return jsonify({
+            "role_id": role.role_id,
+            "role_name": role.role_name,
+            "permissions": permissions_data
+        }), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

@@ -110,3 +110,26 @@ def get_user_from_auth_header():
 
     except jwt.InvalidTokenError:
         return None, jsonify({"error": "Invalid token"}), 401
+    
+
+# def verify_jwt(token: str, secret_key: str):
+#     """
+#     Decodes JWT token and returns payload.
+#     Raises jwt exceptions if token is invalid.
+#     """
+#     # Note: Using the provided `secret_key` argument makes it versatile 
+#     # for both ACCESS_TOKEN_SECRET and REFRESH_TOKEN_SECRET.
+#     try:
+#         # The line below is the correct implementation logic
+#         payload = jwt.decode(token, secret_key, algorithms=["HS256"])
+#         return payload
+#     except jwt.ExpiredSignatureError:
+#         # Re-raise with a custom message or just let the original exception propagate
+#         raise Exception("Token has expired")
+#     except jwt.InvalidTokenError:
+#         raise Exception("Invalid token")
+
+
+def verify_jwt(token, secret_key):
+    decoded = jwt.decode(token, secret_key, algorithms=["HS256"])
+    return decoded   # 👈 MUST be dict

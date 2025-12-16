@@ -24,6 +24,7 @@ class User(db.Model):
     is_active = db.Column(db.Boolean, default=True)
 
 
+
     team_memberships = db.relationship(
         'TeamMembership',  
         back_populates='member', 
@@ -36,7 +37,7 @@ class UserRole(db.Model):
     user_id = db.Column(db.String(50), db.ForeignKey('user.user_id'), nullable=True)
     # The foreign key for 'roles' table is already correct
     role_id = db.Column(db.String(64), db.ForeignKey('roles.role_id'), nullable=True)
-    # company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
+    company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
 
 class Clients(db.Model):
     __tablename__ = 'clients'
@@ -46,8 +47,8 @@ class Clients(db.Model):
     client_phone = db.Column(db.String(255) , nullable = True , unique = True)
     client_address = db.Column(db.String(255) , nullable = True)
     user_id = db.Column(db.String(50), db.ForeignKey('user.user_id'), nullable=True)
-    client_password = db.Column(db.String(255), nullable=True) ,
-    # company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
+    client_password = db.Column(db.String(255), nullable=True) 
+    company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
 
 
     # Optional: Define the relationship for easier querying
@@ -65,6 +66,9 @@ class Vendors(db.Model):
     space_id = db.Column(db.String(50) , db.ForeignKey('spaces.space_id') , nullable = True)
     tags = db.Column(db.String(255)) # Storing tags as a comma-separated string
     notes = db.Column(db.String(255) , nullable = True)
+    project_id = db.Column(db.String(50) , db.ForeignKey('projects.project_id') , nullable = True)
+    company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
+
 
 class Templates(db.Model):
     __tablename__ = 'templates'
@@ -105,6 +109,8 @@ class ProjectAssignments(db.Model):
     user_id = db.Column(db.String(50) , db.ForeignKey('user.user_id') , nullable = True)
     role = db.Column(db.String(100) , nullable = True)
     assigned_at = db.Column(db.DateTime , default = datetime.utcnow , nullable = True)   
+    company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
+    is_assigned = db.Column(db.Boolean, default=True, nullable=True)
 
 class ProjectTemplates(db.Model):
     __tablename__ = 'project_templates'
@@ -140,6 +146,7 @@ class Tasks(db.Model):
     assigned_vendor = db.Column(db.String(50), db.ForeignKey('vendors.vendor_id'), nullable=True)
     assigned_team = db.Column(db.String(50), db.ForeignKey('teams.team_id'), nullable=True)
     date = db.Column(db.DateTime, nullable=True)
+    company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
 
      # --- EXISTING FIELDS ---
     # requires_site_visit = db.Column(db.Boolean, nullable=True, default=False)
@@ -152,6 +159,7 @@ class Projectvendor(db.Model):
     vendor_id = db.Column(db.String(50) , db.ForeignKey('vendors.vendor_id') , nullable = True)
     role = db.Column(db.String(50), nullable=True)
     assigned_date = db.Column(db.Date, default=datetime.today, nullable=True)
+    company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
 
 class Documents(db.Model):
     __tablename__ = 'documents'
@@ -182,6 +190,19 @@ class Boards(db.Model):
     board_name = db.Column(db.String(255), nullable=True)
     board_description = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    user_id = db.Column(db.String(50), db.ForeignKey('user.user_id'), nullable=True)
+    company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
+    pinterest_board_id = db.Column(db.String(255), nullable=True)
+    board_url = db.Column(db.String(500), nullable=True)
+    source_type = db.Column(db.String(50), default='internal') 
+    is_imported = db.Column(db.Boolean, default=False)
+    space_id = db.Column(db.String(50) , db.ForeignKey('spaces.space_id') , nullable = True)
+    # project_id = db.Column(db.String(50) , db.ForeignKey('projects.project_id') , nullable = True)
+    inspiration_id = db.Column(db.String(50), db.ForeignKey('inspiration.inspiration_id') , nullable = True)
+    
+
+
+     # The board ID from Pinterest (e.g., '987654321')
     # image_url = db.Column(db.String(300), nullable=True)
 
 class Role(db.Model):
@@ -200,8 +221,10 @@ class Permission(db.Model):
 class RolePermission(db.Model):
     __tablename__ = 'role_permissions'
     role_permission_id = db.Column(db.String(64), primary_key=True, default=generate_uuid)
-    role_id = db.Column(db.String(50), db.ForeignKey('roles.role_id'), nullable=False)
+    role_id = db.Column(db.String(50), db.ForeignKey('roles.role_id'), nullable=True)
     permission_id = db.Column(db.String(50), db.ForeignKey('permissions.permission_id'), nullable=False)
+    is_read = db.Column(db.Boolean)
+    is_write = db.Column(db.Boolean)
 
 class Pin(db.Model):
     __tablename__ = 'pins'
@@ -213,7 +236,13 @@ class Pin(db.Model):
     position_y = db.Column(db.Integer, nullable=True)
     # created_by = db.Column(db.String(50), db.ForeignKey('user.user_id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    #there will be images inside pin also
+    pinterest_pin_id = db.Column(db.String(50), unique=True, nullable=True, index=True) # The external ID from Pinterest
+    image_url = db.Column(db.Text, nullable=True)
+    title = db.Column(db.Text, nullable=True)
+    link = db.Column(db.Text, nullable=True)
+    space_id = db.Column(db.String(50) , db.ForeignKey('spaces.space_id') , nullable = True)
+
+
 
 class Comment(db.Model):
     __tablename__ = 'comments'
@@ -270,6 +299,7 @@ class Spaces(db.Model):
     status = db.Column(db.String(50), nullable=True, default="To Do")
     category = db.Column(db.String(100), nullable=True , default = "Custom")
     preset_id = db.Column(db.String(64) ,db.ForeignKey('preset.preset_id'), nullable = True)
+    company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
     # created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=True)
 
 class Drawings(db.Model):
@@ -293,7 +323,7 @@ class Inspiration(db.Model):
     # url = db.Column(db.String(512), nullable=False)
     description = db.Column(db.Text)
     tags = db.Column(db.String(255)) # Storing tags as a comma-separated string
-    
+    company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
     # Optional: A relationship to the Spaces table
     space = db.relationship('Spaces', backref=db.backref('inspirations', lazy=True))
 
@@ -330,6 +360,7 @@ class TeamMembership(db.Model):
     joined_at = db.Column(db.DateTime, default=datetime.utcnow)
     team = db.relationship('Teams', back_populates='memberships')
     member = db.relationship('User', back_populates='team_memberships')
+    company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
     
 
 
@@ -345,6 +376,7 @@ class Teams(db.Model):
     phone_number = db.Column(db.String(45), nullable=True)
     team_email = db.Column(db.String(100), unique=True, nullable=True)    
     # Link to the User who owns/leads the team
+    company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
     owner_id = db.Column(db.String(50), db.ForeignKey('user.user_id'), nullable=True)
     # Relationships
     # 1. Memberships (One-to-Many to the Association Object)
@@ -379,15 +411,10 @@ class Payment(db.Model):
     # --- Primary Key (UUID) ---
     payment_id = db.Column(db.String(36), primary_key=True, default=generate_uuid,nullable=False)
     invoice_id = db.Column(db.String(36), db.ForeignKey('invoices.invoice_id'), nullable=True)
-    # The date the payment was received/processed.
     payment_date = db.Column(db.DateTime, nullable=True, default=datetime.utcnow)
-    # The amount of the payment (can be partial). Numeric(10, 2) for currency.
     amount_received = db.Column(db.Numeric(10, 2), nullable=True)
-    # How the client paid (e.g., 'Bank Transfer', 'Credit Card').
     payment_method = db.Column(db.String(100), nullable=True)
-    # External reference number (e.g., Stripe ID, check number).
     transaction_ref = db.Column(db.String(255), unique=True, nullable=True)
-    # Establishes a link to the Invoice model.
     invoice = db.relationship('Invoice', backref='payments')
 
 class Bill(db.Model):
@@ -397,28 +424,15 @@ class Bill(db.Model):
     """
     __tablename__ = 'bills'
     bill_id = db.Column(db.String(50), primary_key=True, default=generate_uuid,nullable=False)
-    # Links to the Vendor who sent the bill.
     vendor_id = db.Column(db.String(36), db.ForeignKey('vendors.vendor_id'), nullable=True)
-    # Links to the Project this bill is associated with (can be nullable if for overhead/non-project costs).
     project_id = db.Column(db.String(36), db.ForeignKey('projects.project_id'), nullable=True)
-    # The reference number given by the vendor (often unique or primary key for tracking).
     vendor_invoice_ref = db.Column(db.String(100), unique=True, nullable=True)
-    # The date the bill was received by your firm.
     received_date = db.Column(db.Date, nullable=False, default=datetime.utcnow().date)
-    # The date the payment is owed to the vendor.
     due_date = db.Column(db.Date, nullable=True)
-    # The total amount owed to the vendor. Numeric(10, 2) for currency.
     total_owed = db.Column(db.Numeric(10, 2), nullable=True)
-    # Current status (e.g., 'Pending Payment', 'Paid', 'Disputed').
     status = db.Column(db.String(50), nullable=True, default='Pending Payment')
-    # --- Relationships ---
-    # Assuming Vendor and Project models exist.
     vendor = db.relationship('Vendors', backref='bills')
     project = db.relationship('Projects', backref='bills')
-
-    # def __repr__(self):
-        # return f"<Bill {self.vendor_invoice_ref} | Status: {self.status}>"
-
 
 
 class VendorPayment(db.Model):
@@ -437,8 +451,6 @@ class VendorPayment(db.Model):
     bill = db.relationship('Bill', backref='vendor_payments')
     vendor = db.relationship('Vendors', backref='payments_made')
 
-    # def __repr__(self):
-        # return f"<VendorPayment {self.vendor_payment_id} | Paid: ${self.amount_paid}>"
 
 class Cards(db.Model):
     __tablename__ = 'cards'
@@ -532,8 +544,9 @@ class Pinterest(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     scopes = db.Column(db.Text)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    pinterest_account_id = db.Column(db.String(255), unique=True, nullable=False) # The user ID from Pinterest (e.g., '123456789')
+    pinterest_account_id = db.Column(db.String(255), unique=True, nullable=True) # The user ID from Pinterest (e.g., '123456789')
     pinterest_username = db.Column(db.String(255), nullable = True)
+    company_id = db.Column(db.String(50) , db.ForeignKey('companies.company_id') , nullable = True)
 
 
 class Preset(db.Model):
@@ -560,4 +573,22 @@ class Invite(db.Model):
     accepted_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     single_use = db.Column(db.Boolean, default=True)
+    role_id = db.Column(db.String(50), db.ForeignKey('roles.role_id'), nullable=True)
+
+class PresetSpace(db.Model):
+    __tablename__ = "preset_spaces"
+    preset_space_id = db.Column(db.Integer, primary_key=True)
+    preset_id = db.Column(db.String(64), db.ForeignKey("preset.preset_id") , nullable = True)
+    space_id = db.Column(db.String(50) , db.ForeignKey('spaces.space_id') , nullable = True)
+    space_name = db.Column(db.String(255))
+    space_type = db.Column(db.String(50))
+    description = db.Column(db.Text, nullable=True)
+
+class User_Company_Role(db.Model):
+    __tablename__ = "user_company_role"
+    user_company_role_id = db.Column(db.String(50) , primary_key = True , default = generate_uuid)
+    user_id = db.Column(db.String(50), db.ForeignKey("user.user_id"), nullable=True)
+    company_id =  db.Column(db.String(50), db.ForeignKey("companies.company_id"), nullable=True)
+    role_id = db.Column(db.String(64), db.ForeignKey("roles.role_id" ), nullable = True)
+
     

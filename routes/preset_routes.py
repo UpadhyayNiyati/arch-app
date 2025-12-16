@@ -20,30 +20,92 @@ logger.setLevel(logging.INFO)
 from models import Preset, generate_uuid, Spaces, Projects
 
 # --- Serialization Helper for Spaces (Simplified) ---
-def serialize_space(space):
-    """Manually serializes a Spaces object to a dictionary with only ID and Name."""
-    # Only return space_id and space_name as requested
-    return {
-        'space_id': space.space_id,
-        'space_name': space.space_name,
-    }
+# def serialize_space(space):
+#     """Manually serializes a Spaces object to a dictionary with only ID and Name."""
+#     # Only return space_id and space_name as requested
+#     return {
+#         'space_id': space.space_id,
+#         'space_name': space.space_name,
+#     }
 
 # --- Serialization Helper for Preset (Updated) ---
+# def serialize_preset(preset):
+#     """
+#     Manually serializes a Preset object to a dictionary, including
+#     related Spaces details (only space_name) if a space_id is present.
+#     """
+#     # Base Preset details - Returning only the requested subset of fields, plus IDs
+#     # data = {
+#     #     'preset_id': preset.preset_id,
+#     #     'preset_name': preset.preset_name,
+#     #     'preset_description': preset.preset_description,
+#     #     'space_id': preset.space_id,
+#     #     # 'spaces_count' : 0,
+#     #     "spaces_count": len(preset.spaces) if hasattr(preset, "spaces") else 0,
+
+#     #     # 'space_details': [] , # Initialize the nested structure
+#     #     "space_details": [
+#     #         {
+#     #             "preset_space_id": space.preset_space_id,
+#     #             "space_name": space.space_name,
+#     #             "space_type": space.space_type,
+#     #             "description": space.description
+#     #         }
+#     #         for space in getattr(preset, "spaces", [])
+#     #     ]
+#     #     # 'project_id':preset.project_id
+#     # }
+#     return {
+#         "preset_id": preset.preset_id,
+#         "preset_name": preset.preset_name,
+#         "preset_description": preset.preset_description,
+#         "preset_type": preset.preset_type if hasattr(preset, "preset_type") else None,
+#         "project_id": preset.project_id if hasattr(preset, "project_id") else None,
+#         "space_id": preset.space_id if hasattr(preset, "space_id") else None,
+
+#         # Count of related preset spaces
+#         "spaces_count": len(preset.spaces) if hasattr(preset, "spaces") else 0,
+
+#         # Full details of each space
+#         "space_details": [
+#             {
+#                 "preset_space_id": space.preset_space_id,
+#                 "space_name": space.space_name,
+#                 "space_type": space.space_type,
+#                 "description": space.description
+#             }
+#             for space in getattr(preset, "spaces", [])
+#         ]
+#     }
+
 def serialize_preset(preset):
-    """
-    Manually serializes a Preset object to a dictionary, including
-    related Spaces details (only space_name) if a space_id is present.
-    """
-    # Base Preset details - Returning only the requested subset of fields, plus IDs
-    data = {
-        'preset_id': preset.preset_id,
-        'preset_name': preset.preset_name,
-        'preset_description': preset.preset_description,
-        'space_id': preset.space_id,
-        'spaces_count' : 0,
-        'space_details': [] , # Initialize the nested structure
-        'project_id':preset.project_id
+    return {
+        "preset_id": preset.preset_id,
+        "preset_name": preset.preset_name,
+        "preset_description": preset.preset_description,
+        "preset_type": getattr(preset, "preset_type", None),
+        "project_id": getattr(preset, "project_id", None),
+        "space_id": getattr(preset, "space_id", None),
+
+        # Count of related preset spaces
+        "spaces_count": len(getattr(preset, "spaces", [])),
+
+        # Full details of each space
+        "space_details": [
+            {
+                "preset_space_id": space.preset_space_id,   # ✅ FIXED
+                "space_name": space.space_name,
+                "space_type": space.space_type,
+                "description": space.description,
+            }
+            for space in getattr(preset, "spaces", [])
+        ],
     }
+
+
+
+
+
 
     # Conditionally fetch and serialize Space details
     if preset.space_id:

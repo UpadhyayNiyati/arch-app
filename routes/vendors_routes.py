@@ -63,6 +63,7 @@ def create_vendor():
         description: Internal server error.
     """
     data = request.json
+    company_id = request.current_company_id
     vendor_email = data.get('vendor_email')
     space_id = getattr(Vendors, 'space_id', None)  # Default to None for global vendors
 
@@ -92,15 +93,30 @@ def create_vendor():
             # trade=data.get('trade'),
             contact_number = data.get('contact_number'),
             tags = data.get('tags'),
-            # space_id =  getattr(Vendors, 'space_id', None)  # Optional: Include space_id if provided
-            # project_id = data.get('project_id')  # Optional: Include project_id if provided 
+            space_id =  getattr(Vendors, 'space_id', None),  # Optional: Include space_id if provided
+            project_id = data.get('project_id')  # Optional: Include project_id if provided ,
+
         )
         
         # 3. Add and commit the new vendor to the database
         db.session.add(new_vendor)
         db.session.commit()
         
-        return jsonify({'message': 'Vendor created successfully'}), 201
+        return jsonify({'message': 'Vendor created successfully',
+                        "vendors":{
+                            'vendor_id': new_vendor.vendor_id,
+                            'company_name': new_vendor.company_name,
+                            'contact_person': new_vendor.contact_person,
+                            'vendor_email': new_vendor.vendor_email,
+                            'trade': new_vendor.trade,
+                            'contact_number': new_vendor.contact_number,
+                            'tags': new_vendor.tags,
+                            'space_id': new_vendor.space_id,
+                            'project_id': new_vendor.project_id,
+                            'company_id' : new_vendor.company_id
+
+                        }
+                      }), 201
         
     except Exception as e:
         db.session.rollback()
@@ -146,6 +162,7 @@ def create_vendor_for_space(space_id):
     """
     # 1. Get the JSON data from the request body
     data = request.json
+    company_id = request.current_company_id
     
     # 2. Extract the required vendor email
     vendor_email = data.get('vendor_email') 
@@ -159,6 +176,7 @@ def create_vendor_for_space(space_id):
     # If the email must be globally unique across ALL spaces, remove the 'space_id' filter.
     existing_vendor = Vendors.query.filter_by(
         vendor_email=vendor_email, 
+        company_id = company_id,
         space_id=space_id
     ).first()
 
@@ -179,14 +197,27 @@ def create_vendor_for_space(space_id):
             contact_number = data.get('contact_number'),
             tags = data.get('tags'),
             # *** KEY ADDITION: Assign the space_id from the URL ***
-            space_id=space_id
+            space_id=space_id,
+            company_id = company_id
         )
         
         # 5. Add and commit the new vendor to the database
         db.session.add(new_vendor)
         db.session.commit()
         
-        return jsonify({'message': 'Vendor created successfully', 'vendor_id': new_vendor.vendor_id}), 201
+        return jsonify({'message': 'Vendor created successfully', 
+                        "vendors":{
+                            'vendor_id': new_vendor.vendor_id,
+                            'company_name': new_vendor.company_name,
+                            'contact_person': new_vendor.contact_person,
+                            'vendor_email': new_vendor.vendor_email,
+                            'trade': new_vendor.trade,
+                            'contact_number': new_vendor.contact_number,
+                            'tags': new_vendor.tags,
+                            'space_id': new_vendor.space_id,
+                            'company_id' : new_vendor.company_id
+                        }
+                      }), 201
         
     except Exception as e:
         db.session.rollback()
@@ -247,7 +278,7 @@ def get_all_vendors():
         #         'trade': vendor.trade
         #     })
         page = request.args.get('page' , 1 , type = int)
-        per_page = request.args.get('per_page' , 10 , type = int)
+        per_page = request.args.get('per_page' , 500 , type = int)
         vendors_pagination = Vendors.query.paginate(page = page , per_page = per_page , error_out = False)
         vendors = vendors_pagination.items
 
@@ -273,6 +304,58 @@ def get_all_vendors():
         }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+
+@vendors_bp.route('/vendors/without_pagination', methods=['GET'])
+@jwt_required
+def get_all_vendors_without_pagination():
+    """
+    Retrieves all vendors without pagination.
+    ---
+    tags:
+      - Vendors - CRUD
+    responses:
+      200:
+        description: A list of all vendor records.
+        schema:
+          type: array
+          items:
+            type: object
+            properties:
+              vendor_id: {type: string}
+              company_name: {type: string}
+              contact_person: {type: string}
+              vendor_email: {type: string, format: email}
+              contact_number: {type: string}
+              tags: {type: array, items: {type: string}}
+      500:
+        description: Internal server error.
+    """
+    try:
+        # 1. Query all vendors from the database (no .paginate())
+        vendors = Vendors.query.all()
+
+        # 2. Prepare the list of vendor dictionaries
+        result = []
+        for vendor in vendors:
+            result.append({
+                'vendor_id': vendor.vendor_id,
+                'company_name': vendor.company_name,
+                'contact_person': vendor.contact_person,
+                'vendor_email': vendor.vendor_email,
+                'trade': vendor.trade, # Field was commented out in original logic
+                'contact_number': vendor.contact_number,
+                'tags': vendor.tags.split(',') if vendor.tags else []
+            })
+
+        # 3. Return the list directly
+        return jsonify(result), 200
+
+    except Exception as e:
+        # 4. Handle any potential database/server error
+        # It's good practice to log the error for debugging.
+        logging.error(f"Error retrieving all vendors: {e}")
+        return jsonify({"error": "An unexpected server error occurred."}), 500
     
 #get single vendor by id
 @vendors_bp.route('/vendors/<string:vendor_id>', methods=['GET'])
@@ -426,7 +509,7 @@ def update_vendor(vendor_id):
             'company_name' : vendor.company_name,
             'contact_person' : vendor.contact_person,
             'vendor_email' : vendor.vendor_email,
-            # 'trade' : vendor.trade,
+            'trade' : vendor.trade,
             'contact_number' : vendor.contact_number,
             'tags' : vendor.tags
         }
@@ -508,7 +591,19 @@ def update_vendor_by_space_id(space_id):
 
         # 3. Commit changes
         db.session.commit()
-        return jsonify({'message': f'Vendor ID {vendor_id} in space {space_id} updated successfully'}), 200
+        return jsonify({'message': f'Vendor ID {vendor_id} in space {space_id} updated successfully',
+                        "vendor": {
+                            'vendor_id': vendor.vendor_id,
+                            'company_name': vendor.company_name,
+                            'contact_person': vendor.contact_person,
+                            'vendor_email': vendor.vendor_email,
+                            'trade': vendor.trade,
+                            'contact_number': vendor.contact_number,
+                            'tags': vendor.tags,
+                            'space_id': vendor.space_id
+
+                        }
+                        }), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 404
@@ -824,3 +919,54 @@ def search_vendor_by_contact_number():
         # Log the error for debugging
         logging.error(f"Error searching vendor by contact number prefix: {e}", exc_info=True)
         return jsonify({"error": "An unexpected server error occurred during search."}), 500
+    
+
+@vendors_bp.route('/vendors/company/<string:company_id>', methods=['GET'])
+@jwt_required
+def get_vendors_by_company_id(company_id):
+    """
+    Retrieves all vendors associated with a specific company_id.
+    ---
+    tags:
+      - Vendors - Company Management
+    parameters:
+      - name: company_id
+        in: path
+        type: string
+        required: true
+    responses:
+      200:
+        description: List of vendors for the company.
+      404:
+        description: No vendors found for the company ID.
+      500:
+        description: Internal server error.
+    """
+    try:
+        vendors = Vendors.query.filter_by(company_id=company_id).all()
+
+        if not vendors:
+            return jsonify({
+                "message": f"No vendors found for company ID '{company_id}'"
+            }), 404
+
+        result = []
+        for vendor in vendors:
+            result.append({
+                'vendor_id': vendor.vendor_id,
+                'company_id': vendor.company_id,
+                'company_name': vendor.company_name,
+                'contact_person': vendor.contact_person,
+                'vendor_email': vendor.vendor_email,
+                'contact_number': vendor.contact_number,
+                'tags': vendor.tags.split(',') if vendor.tags else []
+            })
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        db.session.rollback()
+        logging.error(f"Error fetching vendors for company ID {company_id}: {e}", exc_info=True)
+        return jsonify({
+            "error": "An unexpected server error occurred."
+        }), 500

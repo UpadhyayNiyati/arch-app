@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify , Blueprint , g
+from flask import Flask, request, jsonify , Blueprint , g , current_app
 from models import db , Invite , User , Role , UserRole
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
@@ -29,10 +29,17 @@ bcrypt = Bcrypt()
 def send_invite():
     data = request.get_json()
     emails = data.get("emails")
-    company_id = data.get("company_id")
+    # company_id = data.get("company_id")
     
     # Get user_id from the request object, which was set by the decorator
     created_by_user_id = request.current_user_id 
+    current_user = User.query.get(created_by_user_id)
+    if not current_user:
+        return jsonify({"error": "Authenticated user not found"}), 401
+    
+    company_id = current_user.company_id
+    if not company_id:
+        return jsonify({"error": "User does not belong to any company"}), 400
     
     if not emails or not isinstance(emails, list):
         return jsonify({"error": "A list of emails is required"}), 400
@@ -40,11 +47,38 @@ def send_invite():
     invite_links = []
     successful_sends = []
     failed_sends = []
+    already_registered = []
+
+    expiry_time = datetime.utcnow() + timedelta(hours=72)
 
     for email in emails:
-        raw_token = secrets.token_urlsafe(16)
-        salt = secrets.token_hex(16)
-        token_hash = hashlib.sha256((salt + raw_token).encode()).hexdigest()
+        # Assuming you have access to the User model here.
+        existing_user = User.query.filter_by(user_email=email, company_id=company_id).first()
+        if existing_user:
+            already_registered.append(email)
+            logging.warning(f"Invite skipped: {email} is already a user in company {company_id}.")
+            continue
+
+        active_invite = Invite.query.filter_by(
+            email=email, 
+            company_id=company_id, 
+            single_use=True
+        ).filter(Invite.expires_at > datetime.utcnow()).first()
+
+        if active_invite:
+             # Just resend the existing invite link if it's still valid
+            raw_token = active_invite.raw_token_id # Fetch token ID to reconstruct link
+            token_hash = active_invite.token_hash
+            salt = active_invite.salt
+            invite_link = f"http://localhost:5173/invite/accept?token={raw_token}"
+            logging.info(f"Using existing active invite for {email}")
+
+            invite = active_invite  # Reuse existing invite
+
+        else:
+            raw_token = secrets.token_urlsafe(16)
+            salt = secrets.token_hex(16)
+            token_hash = hashlib.sha256((salt + raw_token).encode()).hexdigest()
         
         # 1. Prepare the invite link
         invite_link = f"http://localhost:5173/invite/accept?token={raw_token}"
@@ -56,7 +90,7 @@ def send_invite():
             raw_token_id=raw_token[:8],
             token_hash=token_hash,
             salt=salt,
-            expires_at=datetime.utcnow() + timedelta(hours=1),
+            expires_at=expiry_time,
             single_use=True
         )
 
@@ -77,7 +111,11 @@ def send_invite():
                 subject=subject,
                 body=body
             )
-            successful_sends.append(email)
+            successful_sends.append({
+                "email": email,
+                "invite_link": invite_link,
+                "company_id": company_id
+            })
             logging.info(f"Invite email successfully queued for {email}")
 
         except Exception as e:
@@ -102,12 +140,15 @@ def send_invite():
         response_message += f" Successfully sent {len(successful_sends)} emails."
     if failed_sends:
         response_message += f" Failed to send {len(failed_sends)} emails."
+    if already_registered:
+        response_message += f" Skipped {len(already_registered)} emails (users already registered)."
 
     return jsonify({
         "message": response_message, 
-        "invite_links": invite_links,
+        "invite_links": [s['invite_link'] for s in successful_sends],
         "successful_sends": successful_sends,
-        "failed_sends": failed_sends
+        "failed_sends": failed_sends,
+        "already_registered": already_registered
     }), 201
 
 
@@ -134,7 +175,8 @@ def validate_invite():
     return jsonify({
         "message": "Valid invite",
         "email": invite.email,
-        "company_id": invite.company_id
+        "company_id": invite.company_id,
+        "created_by_user_id": invite.created_by_user_id
     }), 200
 
 
@@ -145,7 +187,36 @@ def register_from_invite():
     name = data.get("name")
     password = data.get("password")
 
+    if not all([raw_token, name, password]):
+        return jsonify({"error": "Missing required fields: token, name, and password"}), 400
+
     invite = Invite.query.filter_by(raw_token_id=raw_token[:8]).first()
+
+    if not invite:
+        return jsonify({"error": "Invalid invite or token prefix"}), 400
+    
+    computed_hash = hashlib.sha256((invite.salt + raw_token).encode()).hexdigest()
+
+    if computed_hash != invite.token_hash:
+        return jsonify({"error": "Invalid token signature"}), 400
+
+    if datetime.utcnow() > invite.expires_at:
+        return jsonify({"error": "Invite expired"}), 400
+    
+    if not invite.single_use:
+         return jsonify({"error": "Invite has already been used"}), 400
+    # --- End Validation Logic ---
+
+    # Check for existing user with the same email in the company (Safety check)
+    existing_user = User.query.filter_by(user_email=invite.email, company_id=invite.company_id).first()
+    if existing_user:
+        # Mark invite as accepted/used even if a user somehow got created outside the flow
+        invite.single_use = False
+        invite.accepted = True
+        invite.accepted_by_user_id = user.user_id
+        invite.accepted_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({"message": "Account already exists and invite marked as used."}), 409
 
     # (Repeat validation logic...)
 
@@ -155,14 +226,24 @@ def register_from_invite():
         user_email=invite.email,
         company_id=invite.company_id,
         user_password=bcrypt.generate_password_hash(password).decode("utf-8"),
+        is_active=True
     )
     db.session.add(user)
+    db.session.flush()
 
     # Mark invite used
     invite.single_use = False
+    invite.accepted =   True
+    invite.accepted_by_user_id = user.user_id
+    invite.accepted_at = datetime.utcnow()
     db.session.commit()
 
-    return jsonify({"message": "Account created successfully"}), 201
+    return jsonify({"message": "Account created successfully",
+                    "user_id": user.user_id,
+                    "company_id": user.company_id,
+                    "created_by_user_id": invite.created_by_user_id, # User who originally sent the invite
+                    "accepted_by_user_id": user.user_id # The new user's ID
+                    }), 201
 
 
 # @invite_bp.route("/user/revoke_admin", methods=["POST"])
@@ -327,6 +408,10 @@ def revoke_access():
         # company_id=company_id # Check company membership directly from UserRole
     ).first()
 
+    current_user = User.query.get(request.current_user_id)
+    if not current_user or current_user.company_id != company_id or not is_admin_of_company:
+        return jsonify({"error": "Not authorized: Current user is not an Admin of the specified company."}), 403
+
     if not is_admin_of_company:
         return jsonify({"error": "Not authorized: Current user is not an Admin for this company."}), 403
 
@@ -356,3 +441,326 @@ def revoke_access():
     return jsonify({
         "message": f"Access successfully revoked (user deactivated) for {target_user.user_name if target_user.user_name else target_user.user_email}"
     }), 200
+
+
+# @invite_bp.route("/invite/send_with_role", methods=["POST"])
+# @jwt_required
+# def send_invite_with_role():
+#     data = request.get_json()
+#     emails = data.get("emails")
+#     selected_role_name = data.get("role_name")  # NEW FIELD
+    
+#     created_by_user_id = request.current_user_id
+#     current_user = User.query.get(created_by_user_id)
+
+#     if not current_user:
+#         return jsonify({"error": "Authenticated user not found"}), 401
+
+#     company_id = current_user.company_id
+#     if not company_id:
+#         return jsonify({"error": "User does not belong to any company"}), 400
+
+#     if not emails or not isinstance(emails, list):
+#         return jsonify({"error": "A list of emails is required"}), 400
+
+#     if not selected_role_name:
+#         return jsonify({"error": "Role name is required"}), 400
+
+#     # Validate role
+#     role = Role.query.filter_by(role_name=selected_role_name).first()
+#     if not role:
+#         return jsonify({"error": f"Role '{selected_role_name}' does not exist"}), 400
+
+#     invite_links = []
+#     successful_sends = []
+#     failed_sends = []
+#     already_registered = []
+
+#     expiry_time = datetime.utcnow() + timedelta(hours=72)
+
+#     for email in emails:
+
+#         existing_user = User.query.filter_by(user_email=email, company_id=company_id).first()
+#         if existing_user:
+#             already_registered.append(email)
+#             continue
+
+#         raw_token = secrets.token_urlsafe(16)
+#         salt = secrets.token_hex(16)
+#         token_hash = hashlib.sha256((salt + raw_token).encode()).hexdigest()
+
+#         invite_link = f"http://localhost:5173/invite/accept?token={raw_token}"
+
+#         invite = Invite(
+#             email=email,
+#             company_id=company_id,
+#             created_by_user_id=created_by_user_id,
+#             raw_token_id=raw_token[:8],
+#             token_hash=token_hash,
+#             salt=salt,
+#             role_id=role.role_id,     # <—— Save selected role
+#             expires_at=expiry_time,
+#             single_use=True
+#         )
+
+#         db.session.add(invite)
+
+#         # send email
+#         try:
+#             subject = "You've been invited!"
+#             body = f"You were invited as '{selected_role_name}'. Click link:\n{invite_link}"
+
+#             send_email(
+#                 recipients=[email],
+#                 subject=subject,
+#                 body=body
+#             )
+#             successful_sends.append({"email": email, "invite_link": invite_link})
+#         except:
+#             failed_sends.append(email)
+
+#     db.session.commit()
+
+#     return jsonify({
+#         "message": "Invites processed.",
+#         "successful_sends": successful_sends,
+#         "failed_sends": failed_sends,
+#         "already_registered": already_registered
+#     }), 201
+
+@invite_bp.route("/invite/send_with_role", methods=["POST"])
+@jwt_required
+# Assuming jwt_required, User, Role, Invite, db, send_email are available globally or imported
+def send_invite_with_role():
+    """
+    Sends invitations to a list of emails with a specified user role.
+    """
+    data = request.get_json()
+    emails = data.get("emails")
+    selected_role_name = data.get("role_name")  # NEW FIELD
+    
+    # 1. Authentication and User/Company Retrieval
+    # created_by_user_id = request.current_user_id # Assuming this is set by jwt_required
+    
+    # --- START DUMMY PLACEHOLDER FOR TESTING ---
+    # NOTE: Replace with actual authentication logic in a real application
+    # For demonstration, we'll assume a fixed user/company setup if auth is bypassed
+    try:
+        created_by_user_id = request.current_user_id
+        print(f"Authenticated user ID: {created_by_user_id}")
+    except AttributeError:
+        # Fallback for testing if jwt_required isn't fully set up in a context
+        return jsonify({"error": "Authentication token required"}), 401 
+    # --- END DUMMY PLACEHOLDER FOR TESTING ---
+    
+    current_user = User.query.get(created_by_user_id)
+
+    if not current_user:
+        return jsonify({"error": "Authenticated user not found"}), 401
+
+    company_id = current_user.company_id
+    if not company_id:
+        return jsonify({"error": "User does not belong to any company"}), 400
+
+    # 2. Input Validation
+    if not emails or not isinstance(emails, list):
+        return jsonify({"error": "A list of emails is required"}), 400
+
+    if not selected_role_name:
+        return jsonify({"error": "Role name is required"}), 400
+
+    # 3. Role Validation and Retrieval
+    # THIS SECTION CORRECTLY RETRIEVES THE ROLE OBJECT
+    role = Role.query.filter_by(role_name=selected_role_name).first()
+    if not role:
+        return jsonify({"error": f"Role '{selected_role_name}' does not exist"}), 400
+    
+
+    try:
+        # Get FRONTEND_BASE_URL from the Flask config
+        base_url = current_app.config.get("FRONTEND_BASE_URL")
+        if not base_url:
+             raise KeyError("FRONTEND_BASE_URL not configured")
+    except (RuntimeError, KeyError) as e:
+        # Fallback if current_app isn't available or key is missing
+        # NOTE: Using environment variables is the standard fallback for non-app contexts
+        import os
+        base_url = os.environ.get("FRONTEND_BASE_URL", "http://localhost:5173")
+        if str(e) == "FRONTEND_BASE_URL not configured":
+             print(f"WARNING: FRONTEND_BASE_URL not in config, falling back to {base_url}")
+        
+    # Standard cleanup for base_url (remove trailing slash if present)
+    base_url = base_url.rstrip("/")
+
+    invite_links = []
+    successful_sends = []
+    failed_sends = []
+    already_registered = []
+
+    expiry_time = datetime.utcnow() + timedelta(hours=72)
+    invites_to_commit = [] # List to hold Invite objects before final commit
+
+    for email in emails:
+        email = email.strip().lower() # Basic sanitization
+
+        # Check if user already exists in this company
+        existing_user = User.query.filter_by(user_email=email, company_id=company_id).first()
+        if existing_user:
+            already_registered.append(email)
+            continue
+
+        # Generate unique token, salt, and hash
+        raw_token = secrets.token_urlsafe(16)
+        salt = secrets.token_hex(16)
+        token_hash = hashlib.sha256((salt + raw_token).encode()).hexdigest()
+
+        invite_link = f"{base_url}/invite/accept?token={raw_token}"
+
+        # 4. Create Invite Object
+        # THIS IS WHERE role.role_id IS CORRECTLY ASSIGNED
+        invite = Invite(
+            email=email,
+            company_id=company_id,
+            created_by_user_id=created_by_user_id,
+            raw_token_id=raw_token[:8],
+            token_hash=token_hash,
+            salt=salt,
+            role_id=role.role_id,       # <—— Correctly saves the Role ID
+            expires_at=expiry_time,
+            single_use=True
+        )
+
+        invites_to_commit.append(invite)
+
+        # 5. Send Email
+        try:
+            subject = "You've been invited!"
+            body = f"You were invited as '{selected_role_name}'. Click link:\n{invite_link}"
+
+            # Ensure send_email is properly implemented to handle SMTP errors
+            send_email(
+                recipients=[email],
+                subject=subject,
+                body=body
+            )
+            successful_sends.append({"email": email, "invite_link": invite_link})
+        except Exception as e:
+            # Catch specific email errors if possible, otherwise general Exception
+            failed_sends.append(email)
+            # Log the error (optional)
+            # print(f"Failed to send email to {email}: {e}")
+            
+    # Add all successfully created invites to the session (moved outside the loop for one block of work)
+    for invite in invites_to_commit:
+        # Only commit invites whose emails were attempted to be sent
+        if invite.email in [s['email'] for s in successful_sends]:
+             db.session.add(invite)
+        # OPTION: You might choose to add ALL invites and then manually mark those that failed email as 'pending' or 'failed_send' status if your model supported it.
+        # For simplicity, we only commit those that *successfully* sent an email.
+        
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        # Log the database error
+        return jsonify({"error": "An internal database error occurred while saving invites."}), 500
+
+
+    # 6. Final Response
+    return jsonify({
+        "message": "Invites processed.",
+        "successful_sends": successful_sends,
+        "failed_sends": failed_sends,
+        "already_registered": already_registered
+    }), 201
+
+
+@invite_bp.route("/invite/validate_with_role", methods=["POST"])
+# @jwt_required
+def validate_invite_with_role():
+    data = request.get_json()
+    raw_token = data.get("token")
+
+    invite = Invite.query.filter_by(raw_token_id=raw_token[:8]).first()
+    if not invite:
+        return jsonify({"error": "Invalid invite"}), 400
+
+    computed_hash = hashlib.sha256((invite.salt + raw_token).encode()).hexdigest()
+    if computed_hash != invite.token_hash:
+        return jsonify({"error": "Invalid token"}), 400
+
+    if datetime.utcnow() > invite.expires_at:
+        return jsonify({"error": "Invite expired"}), 400
+
+    role = Role.query.get(invite.role_id)
+
+    return jsonify({
+        "message": "Valid invite",
+        "email": invite.email,
+        "company_id": invite.company_id,
+        "role_name": role.role_name if role else None
+    }), 200
+
+
+@invite_bp.route("/invite/register_with_role", methods=["POST"])
+# @jwt_required
+def register_from_invite_with_role():
+    data = request.get_json()
+    raw_token = data.get("token")
+    name = data.get("name")
+    password = data.get("password")
+
+    invite = Invite.query.filter_by(raw_token_id=raw_token[:8]).first()
+    if not invite:
+        return jsonify({"error": "Invalid invite"}), 400
+
+    computed_hash = hashlib.sha256((invite.salt + raw_token).encode()).hexdigest()
+    if computed_hash != invite.token_hash:
+        return jsonify({"error": "Invalid token"}), 400
+    
+    existing_user = User.query.filter_by(user_email=invite.email).first()
+    if existing_user:
+        return jsonify({
+            "error": "This email is already registered. Please login instead."
+        }), 400
+
+
+    if datetime.utcnow() > invite.expires_at:
+        return jsonify({"error": "Invite expired"}), 400
+
+    # Create user
+    user = User(
+        user_name=name,
+        user_email=invite.email,
+        company_id=invite.company_id,
+        user_password=bcrypt.generate_password_hash(password).decode("utf-8"),
+        is_active=True,
+        role_id=invite.role_id,
+
+    )
+    db.session.add(user)
+    db.session.flush()
+
+    # Assign role from invite
+    if invite.role_id:
+        user_role = UserRole(
+            user_id=user.user_id,
+            role_id=invite.role_id
+        )
+        db.session.add(user_role)
+
+    # Mark invite as used
+    invite.single_use = False
+    invite.accepted = True
+    invite.accepted_at = datetime.utcnow()
+    invite.accepted_by_user_id = user.user_id
+
+    db.session.commit()
+
+    role = Role.query.get(invite.role_id)
+
+    return jsonify({
+        "message": "Account created",
+        "user_id": user.user_id,
+        "role_assigned": role.role_name if role else None
+    }), 201

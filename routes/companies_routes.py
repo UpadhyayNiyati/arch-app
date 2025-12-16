@@ -153,7 +153,7 @@ def get_companies_by_name():
     
 
 @companies_bp.route('/company/<string:company_id>/members', methods=['GET'])
-# @jwt_required   # optional, remove if not using JWT
+@jwt_required   # optional, remove if not using JWT
 def get_company_members(company_id):
     try:
         company = Company.query.get(company_id)
@@ -199,6 +199,8 @@ def add_project_members(project_id):
         if not project:
             return jsonify({"error": "Project not found"}), 404
         
+        company_id = project.company_id
+        
         added_members = []
         skipped_members = []
 
@@ -217,28 +219,37 @@ def add_project_members(project_id):
             ).first()
 
             if existing:
-                skipped_members.append({"user_id": uid, "reason": "Already assigned"})
-                continue
-
+                if existing.is_assigned == True:
+                    skipped_members.append({"user_id": uid, "reason": "Already assigned"})
+                else:
+                    existing.is_assigned = True
+                    existing.role = role # Optional: Update role upon re-assignment
+                    db.session.add(existing)
+                    added_members.append({"user_id": uid, "user_name": user.user_name, "status": "re-assigned"})
+            
+            else:
             # Create assignment entry
-            assignment = ProjectAssignments(
-                user_id=uid,
-                project_id=project_id,
-                role=role,
-                assigned_at=datetime.datetime.now()
-            )
+                assignment = ProjectAssignments(
+                    user_id=uid,
+                    project_id=project_id,
+                    role=role,
+                    company_id=company_id,
+                    is_assigned=True,
+                    assigned_at=datetime.datetime.utcnow()
+                )
 
-            db.session.add(assignment)
-            added_members.append({"user_id": uid, "user_name": user.user_name})
+                db.session.add(assignment)
+                added_members.append({"user_id": uid, "user_name": user.user_name})
 
-        db.session.commit()
+            db.session.commit()
 
-        return jsonify({
-            "message": "Assignments processed",
-            "project_id": project_id,
-            "added_members": added_members,
-            "skipped": skipped_members
-        }), 201
+            return jsonify({
+                "message": "Assignments processed",
+                "project_id": project_id,
+                "added_members": added_members,
+                "skipped": skipped_members,
+                "company_id": company_id
+            }), 201
 
     except Exception as e:
         db.session.rollback()
@@ -251,13 +262,16 @@ def remove_project_member(project_id, user_id):
     try:
         assignment = ProjectAssignments.query.filter_by(
             project_id=project_id,
-            user_id=user_id
+            user_id=user_id,
+            is_assigned = True
         ).first()
 
         if not assignment:
             return jsonify({"error": "User not assigned to project"}), 404
-
-        db.session.delete(assignment)
+        
+        assignment.is_assigned = False
+        db.session.add(assignment)
+        # db.session.delete(assignment)
         db.session.commit()
 
         return jsonify({
@@ -272,10 +286,17 @@ def remove_project_member(project_id, user_id):
 
 
 @companies_bp.route('/projects/<string:project_id>/members', methods=['GET'])
-# @jwt_required
+@jwt_required
 def get_project_members(project_id):
     try:
+        project = Projects.query.get(project_id)
+        if not project:
+            return jsonify({"error": "Project not found"}), 404
+        company_id = project.company_id
+        users = User.query.filter_by(company_id=company_id).all()
         assignments = ProjectAssignments.query.filter_by(project_id=project_id).all()
+        assignment_map = {a.user_id: a for a in assignments}
+
         
         members = []
         for a in assignments:

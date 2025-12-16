@@ -1,6 +1,6 @@
 import time
-from flask import Blueprint , jsonify , request , url_for
-from models import User , db , OtpCode , ProjectAssignments , Clients , Projects , Tasks , Projectvendor , Vendors , Boards ,Pin , ProjectTemplates , Templates , Role , UserToken , UserRole , Invite , Company
+from flask import Blueprint , jsonify , request , url_for , current_app
+from models import User , db , OtpCode , ProjectAssignments , Clients , Projects , Tasks , Projectvendor , Vendors , Boards ,Pin , ProjectTemplates , Templates , Role , UserToken , UserRole , Invite , Company , Pinterest
 from flask_jwt_extended import jwt_required , create_access_token , get_jwt_identity  , create_refresh_token , get_jwt, decode_token
 from flask_migrate import Migrate
 import uuid
@@ -186,7 +186,17 @@ def post_user():
             )
             db.session.add(new_user)
             db.session.commit()
-            return jsonify({"message" : "User added successfully"}) , 201
+            return jsonify({
+                "message" : "User added successfully!!",
+                "user": {
+                "user_id": new_user.user_id,          # Assumes user_id is automatically generated
+                "user_name": new_user.user_name,
+                "user_email": new_user.user_email,
+                "user_phone": new_user.user_phone,
+                "user_address": new_user.user_address,
+                "company_id": new_user.company_id
+                }
+            })
         except Exception as e:
             return jsonify({"error" : str(e)}) , 500
         
@@ -236,7 +246,16 @@ def update_user(user_id):
     if "user_address" in data:
         user.user_address = data["user_address"]
     db.session.commit()
-    return jsonify({"message" : "User updated successfully!!"}) , 200
+    return jsonify({"message" : "User updated successfully!!",
+                    "user":{
+                        "user_id": user.user_id,
+                        "user_name": user.user_name,
+                        "user_email": user.user_email,
+                        "user_phone": user.user_phone,
+                        "user_address": user.user_address,
+                        "company_id": user.company_id
+                    }
+                    }) , 200
 
 #delete user
 @user_bp.route('/delete_user/<string:user_id>', methods=['DELETE'])
@@ -254,9 +273,12 @@ def del_user(user_id):
         UserToken.query.filter_by(user_id=user_id).delete()
         OtpCode.query.filter_by(user_id=user_id).delete()   # <-- ADD THIS
         Invite.query.filter_by(created_by_user_id=user.user_id).delete()  # <-- ADD THIS IF INVITE MODEL IS IMPORTED
+        Invite.query.filter_by(accepted_by_user_id=user.user_id).delete()
         Tasks.query.filter_by(assigned_to=user_id).delete()
         UserRole.query.filter_by(user_id=user_id).delete()
-        Role.query.filter_by(role_id=user.role_id).delete()
+        # Role.query.filter_by(role_id=user.role_id).delete()
+        Pinterest.query.filter_by(user_id=user_id).delete()
+        Boards.query.filter_by(user_id=user_id).delete()
         # Company.query.filter_by(company_id=company_id).delete()
 
         db.session.delete(user)
@@ -402,81 +424,6 @@ def get_user_dashboard(user_id):
         return jsonify({"error": str(e)}), 500
     
 
-
-    
-# def decode_reset_token(token):
-#     """Decodes and validates a password reset JWT token."""
-#     # It just delegates the complex work to the reusable helper
-#     return decode_jwt_custom(token, 
-#                              PASSWORD_RESET_SECRET, 
-#                              expected_type='password_reset')
-
-
- 
-
-
-# --- NEW: OTP Verification for Login ---
-
-# @user_bp.route('/refresh', methods=['POST'])
-# @custom_jwt_required(token_type='refresh') # Require a valid refresh token
-# def refresh_token():
-#     try:
-#         # The token is already validated by @custom_jwt_required('refresh')
-#         auth_header = get_auth_key_from_request()
-#         refresh_token = auth_header # The token is the refresh token itself from the header
-        
-#         # Get claims from the already decoded token (we use the same logic as custom_jwt_required)
-#         payload = decode_jwt_custom(refresh_token, REFRESH_TOKEN_SECRET)
-#         user_id = payload.get('user_id')
-#         company_id = payload.get('company_id')
-
-#         # 1. Database Check (Revocation/Expiry Check)
-#         stored_token_record = db.session.query(UserToken).filter(
-#             and_(
-#                 UserToken.token == refresh_token,
-#                 UserToken.user_id == user_id,
-#                 UserToken.expires_at > datetime.utcnow()
-#             )
-#         ).first()
-
-#         if not stored_token_record:
-#             return jsonify({"message": "Invalid, revoked, or expired refresh token. Please log in again."}), 401
-        
-#         # 2. Generate new access token
-#         new_access_token = create_access_token_custom(user_id, company_id)
-
-#         # NOTE: Token Rotation (deleting old, creating new refresh token)
-#         # is a more advanced pattern and is usually implemented here.
-#         # For simplicity and to match the original attempt, we'll only return the new access token.
-
-#         return jsonify({
-#             "access_token": new_access_token
-#         }), 200
-
-#     except Exception as e:
-#         db.session.rollback()
-#         return jsonify({'message': f'An unexpected server error occurred: {str(e)}'}), 500 
-
-
-    
-# @user_bp.route('/user/protected', methods=['GET'])
-# @custom_jwt_required # Use the custom decorator
-# def protected_route():
-#     # You would need to get the user ID from the token payload inside the route or via a helper
-#     # For now, let's keep the user_id extraction logic clean:
-#     try:
-#         token = get_auth_key_from_request()
-#         payload = decode_jwt_custom(token, ACCESS_TOKEN_SECRET)
-#         current_user_id = payload.get('user_id')
-#     except Exception:
-#         current_user_id = "Unknown" # Should be caught by the decorator, but good fallback
-
-#     return jsonify({
-#         "message": "You have access to this protected resource.",
-#         "user_id": current_user_id
-#     }), 200
-
-
 PASSWORD_RESET_SECRET = os.getenv('PASSWORD_RESET_SECRET', 'your_password_reset_secret_key') 
 RESET_TOKEN_EXPIRY = timedelta(hours=10)
 # NOTE: The original code used URLSafeTimedSerializer which is generally okay, 
@@ -492,22 +439,6 @@ def create_reset_token(user_id):
     }
     return jwt.encode(payload, PASSWORD_RESET_SECRET, algorithm='HS256')
 
-# Helper function to decode and validate a password reset JWT
-# def decode_reset_token(token):
-#     try:
-#         decoded = jwt.decode(
-#             token,
-#             PASSWORD_RESET_SECRET,
-#             algorithms=["HS256"],
-#             options={"require": ["exp", "user_id", "type"]}
-#         )
-#         if decoded.get('type') != 'password_reset':
-#             return {"message": "Invalid token type", "invalid": True}
-#         return decoded
-#     except jwt.ExpiredSignatureError:
-#         return {"message": "Token has expired", "expired": True}
-#     except jwt.InvalidTokenError:
-#         return {"message": "Invalid token", "invalid": True}
     
 logger = logging.getLogger(__name__)
 
@@ -530,6 +461,12 @@ def forgot_password():
     # 2. Security: Always return success to prevent user enumeration
     if user:
         try:
+            try:
+                base_url = current_app.config.get("FRONTEND_BASE_URL", "http://localhost:5173") 
+            except RuntimeError:
+                # Fallback for testing if current_app is not set up correctly
+                import os
+                base_url = os.environ.get("FRONTEND_BASE_URL", "http://localhost:5173")
             # 3. Generate a time-limited **JWT Token**
             reset_token = create_reset_token(user.user_id)
             
@@ -539,7 +476,7 @@ def forgot_password():
             # For this backend, we point to the token validation endpoint.
             # Replace 'auth.reset_password' with the correct blueprint/route if necessary, 
             # or hardcode the expected frontend URL.
-            reset_url = f"http://localhost:5173/reset-password?token={reset_token}" # Adjust this URL for your client
+            reset_url = f"{base_url}/user/reset-password?token={reset_token}" # Adjust this URL for your client
             
             # 5. Send the email with the reset link
             email_body = (
@@ -566,6 +503,12 @@ def forgot_password():
     return jsonify({
         "message": "If the email address is associated with an account, a password reset link has been sent."
     }), 200
+
+
+
+@user_bp.route("/okay",methods=['GET'])
+def okay():
+    return jsonify({"message":"jeocn"})
 
 
 
@@ -648,85 +591,48 @@ def create_role():
         new_role = Role(role_name=role_name)
         db.session.add(new_role)
         db.session.commit()
-        return jsonify({"message": "Role added successfully"}), 201
+        return jsonify({"message": "Role added successfully",
+                        "role":{
+                            "role_id":new_role.role_id,
+                            "role_name":new_role.role_name
+                        }
+                    }), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
+   
 
-# @user_bp.route('/get_users_by_company/<string:company_id>', methods = ['GET'])
-# def get_users_by_company_id(company_id):
-#     """
-#     Get All Users by Company ID with their Roles
-#     ---
-#     tags:
-#       - User Management
-#     parameters:
-#       - name: company_id
-#         in: path
-#         type: string
-#         required: true
-#         description: The UUID of the company to filter users by.
-#     responses:
-#       200:
-#         description: A list of all user records for the given company, including their assigned role name.
-#       404:
-#         description: No users found for the provided company ID.
-#       500:
-#         description: Server error occurred during retrieval.
-#     """
-#     try:
-#         # 1. Query: Select User and join with Role, filtering by company_id
-#         users_with_roles = db.session.query(User, Role)\
-#             .join(Role, User.role_id == Role.role_id)\
-#             .filter(User.company_id == company_id)\
-#             .all()
+@user_bp.route("/assign_role", methods=["POST"])
+def assign_role():
+    data = request.json
+    user_id = data.get("user_id")
+    role_id = data.get("role_id")
 
-#         if not users_with_roles:
-#             return jsonify({"message": f"No users found for company ID: {company_id}"}), 404
+    if not user_id or not role_id:
+        return jsonify({"error": "user_id and role_id required"}), 400
 
-#         result = []
-#         # for user, role in users_with_roles:
-#         for user in 
-#             # Construct the user dictionary, including role information
-#             result.append({
-#                 'user_id': user.user_id,
-#                 'user_name': user.user_name,
-#                 'user_email': user.user_email,
-#                 'user_address': user.user_address,
-#                 'created_at': user.created_at.isoformat() if user.created_at else None,
-#                 # 'role_id': user.role_id,
-#                 # 'role_name': role.role_name,
-#                 'company_id': user.company_id
-#                 # NOTE: user_password is intentionally excluded for security.
-#             })
+    # Check if user already has this role
+    existing = UserRole.query.filter_by(user_id=user_id, role_id=role_id).first()
+    if existing:
+        return jsonify({"message": "Role already assigned",
+                         "role":{
+                                "user_id": existing.user_id,
+                                "role_id": existing.role_id
+                         }
+                        }), 200
 
-#         return jsonify(result), 200
+    new_role = UserRole(user_id=user_id, role_id=role_id)
+    db.session.add(new_role)
+    db.session.commit()
 
-#     except Exception as e:
-#         # In case of an error (e.g., database connection issue)
-#         return jsonify({"error": str(e)}), 500
+    return jsonify({"message": "Role assigned successfully"}), 201
 
 
-@user_bp.route('/get_users_by_company/<string:company_id>', methods=['GET'])
-def get_users_by_company_id(company_id):
+@user_bp.route('/get_users_by_company/<string:company_id>/<string:project_id>', methods=['GET'])
+def get_users_by_company_id(company_id, project_id):
     """
-    Get All Users by Company ID
-    ---
-    tags:
-      - User Management
-    parameters:
-      - name: company_id
-        in: path
-        type: string
-        required: true
-        description: The UUID of the company to filter users by.
-    responses:
-      200:
-        description: A list of all users for the given company.
-      404:
-        description: No users found for the provided company ID.
-      500:
-        description: Server error occurred during retrieval.
+    Get all Users by Company ID and check whether each user is assigned
+    to the given project (to show + or - symbol in UI)
     """
     try:
         # Fetch all users belonging to the company
@@ -736,15 +642,26 @@ def get_users_by_company_id(company_id):
             return jsonify({"message": f"No users found for company ID: {company_id}"}), 404
 
         result = []
+
         for user in users:
+
+            # Check if user is already assigned to that project
+            is_assigned = ProjectAssignments.query.filter_by(
+                user_id=user.user_id,
+                project_id=project_id
+            ).first()
+
+            # Build response object
             result.append({
                 "user_id": user.user_id,
                 "user_name": user.user_name,
                 "user_email": user.user_email,
                 "user_address": user.user_address,
                 "company_id": user.company_id,
-                "created_at": user.created_at.isoformat() if user.created_at else None
-                # Note: Password is intentionally not returned
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+
+                # Show + or - button
+                "assigned": True if is_assigned else False
             })
 
         return jsonify(result), 200
@@ -753,13 +670,13 @@ def get_users_by_company_id(company_id):
         return jsonify({"error": str(e)}), 500
     
 
-@user_bp.route('/get_users_by_company_with_role/<string:company_id>', methods=['GET'])
+@user_bp.route('/get_users_from_company_with_role/<string:company_id>', methods=['GET'])
 def get_users_by_company_id_with_role(company_id):
     """
     Get all users for a company with their roles.
     """
     try:
-        # Join User, UserRole, Role
+        # Fetch all users belonging to the company
         users = (
             db.session.query(User)
             .filter(User.company_id == company_id)
@@ -767,17 +684,18 @@ def get_users_by_company_id_with_role(company_id):
         )
 
         if not users:
-            return jsonify({"message": f"No users found for company ID: {company_id}"}), 404
+            return jsonify({
+                "message": f"No users found for company ID: {company_id}"
+            }), 404
 
         result = []
 
         for user in users:
-            # Fetch roles from UserRole table
+            # Fetch roles for each user
             user_roles = (
                 db.session.query(Role.role_name)
                 .join(UserRole, Role.role_id == UserRole.role_id)
-                .filter(UserRole.user_id == user.user_id,
-                        UserRole.company_id == company_id)
+                .filter(UserRole.user_id == user.user_id)
                 .all()
             )
 
@@ -797,24 +715,287 @@ def get_users_by_company_id_with_role(company_id):
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+
+# @user_bp.route('/users/projects', methods=['GET'])
+# @jwt_required # Assuming this decorator extracts user ID and/or validates the request
+# def get_user_all_projects_from_assignments(user_id):
+#     """
+#     Retrieves ALL projects assigned to a specific user by querying the ProjectAssignments table.
+#     No pagination is applied.
+#     """
+#     user_id = request.current_user_id  # Extracted from JWT or request context
+#     # Optional: Add status filter (e.g., /projects?status=Active)
+#     project_status_filter = request.args.get('status')
+    
+#     # Optional: Add role filter (e.g., /projects?role=Architect)
+#     role_filter = request.args.get('role')
+
+#     try:
+#         # 1. Base Query: Start from ProjectAssignments for the specific user_id
+#         query = ProjectAssignments.query.filter(
+#             ProjectAssignments.user_id == user_id,
+#             ProjectAssignments.is_assigned == True # Only fetch current assignments
+#         )
+        
+#         # 2. Apply role filter if provided
+#         if role_filter:
+#             query = query.filter(ProjectAssignments.role.ilike(f'%{role_filter}%'))
+
+#         # 3. Execute the query to get all assignment records
+#         assignments = query.all()
+
+#         project_list = []
+#         for assignment in assignments:
+            
+#             # Retrieve the Project and Client details for each assignment
+#             project = Projects.query.get(assignment.project_id)
+            
+#             # Ensure the project exists and apply the status filter (if needed)
+#             if not project:
+#                 continue
+            
+#             if project_status_filter and project.status != project_status_filter:
+#                 continue
+                
+#             client_name = project.client.client_name if hasattr(project, 'client') and project.client else None
+
+#             # 4. Serialize the data
+#             project_list.append({
+#                 # Data directly from the ProjectAssignments table
+#                 'assignment_id': assignment.assignment_id,
+#                 'user_role_in_project': assignment.role,
+#                 'assigned_at': assignment.assigned_at.isoformat() if assignment.assigned_at else None,
+                
+#                 # Data from the joined Projects and Clients tables
+#                 'project_id': project.project_id,
+#                 'project_name': project.project_name,
+#                 'location': project.location,
+#                 'due_date': project.due_date.isoformat() if project.due_date else None,
+#                 'status': project.status or 'Not Started',
+#                 'client_name': client_name,
+#                 'company_id': project.company_id # Assuming Projects model has company_id
+#             })
+
+#         # 5. Return the full list response
+#         return jsonify({
+#             'user_id': user_id,
+#             'projects': project_list,
+#             'total_projects': len(project_list)
+#         }), 200
+
+#     except Exception as e:
+#         db.session.rollback()
+#         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
+
+
+# @user_bp.route('/users/projects', methods=['GET'])
+# @jwt_required 
+# def get_user_all_projects_from_assignments():
+#     """
+#     Retrieves ALL projects assigned to the current user.
+#     """
+#     try:
+#         # The jwt_required decorator correctly sets this attribute on the request object
+#         user_id = request.current_user_id  
+
+#         project_status_filter = request.args.get('status')
+#         role_filter = request.args.get('role')
+
+#         # 1. Query assignments for the user
+#         # It's better to use joins/subqueries for performance if possible, 
+#         # but sticking to the current structure for minimal changes.
+#         query = ProjectAssignments.query.filter(
+#             ProjectAssignments.user_id == user_id,
+#             ProjectAssignments.is_assigned == True
+#         )
+
+#         if role_filter:
+#             # Added a more robust check for non-empty string for the filter
+#             query = query.filter(ProjectAssignments.role.ilike(f"%{role_filter}%"))
+
+#         assignments = query.all()
+#         project_list = []
+#         project_ids = [assignment.project_id for assignment in assignments]
+
+#         # 2. Bulk fetch all relevant projects to reduce database hits (optimization)
+#         if project_ids:
+#             # Start with a query for all relevant projects
+#             projects_query = Projects.query.filter(Projects.project_id.in_(project_ids))
+            
+#             # Apply status filter if present
+#             if project_status_filter:
+#                 projects_query = projects_query.filter(Projects.status == project_status_filter)
+            
+#             # Fetch all matching projects
+#             projects = projects_query.all()
+            
+#             # Create a dictionary for quick lookup: {project_id: project_object}
+#             project_map = {p.project_id: p for p in projects}
+
+#             # 3. Iterate through assignments and combine data
+#             for assignment in assignments:
+#                 project = project_map.get(assignment.project_id)
+                
+#                 # Check if the project was found AND if it passed the status filter
+#                 # If a project was filtered out in the projects_query, it won't be in project_map
+#                 if not project:
+#                     continue
+
+#                 # Safely get client name using the relationship (assuming Project model has a 'client' relationship)
+#                 client_name = getattr(project.client, "client_name", None) if hasattr(project, 'client') else None
+
+#                 project_list.append({
+#                     "assignment_id": assignment.assignment_id,
+#                     "user_role_in_project": assignment.role,
+#                     "assigned_at": assignment.assigned_at.isoformat() if assignment.assigned_at else None,
+#                     "project_id": project.project_id,
+#                     "project_name": project.project_name,
+#                     "location": project.location,
+#                     "due_date": project.due_date.isoformat() if project.due_date else None,
+#                     "status": project.status or "Not Started",
+#                     "client_name": client_name,
+#                     "company_id": project.company_id
+#                 })
+        
+#         # Original single-query logic (less efficient but matches your original code flow more closely):
+#         # for assignment in assignments:
+#         #     project = Projects.query.get(assignment.project_id)
+#         #     if not project:
+#         #         continue
+#         #     # ... rest of the original filtering and appending logic ...
+
+
+#         return jsonify({
+#             "user_id": user_id,
+#             "projects": project_list,
+#             "total_projects": len(project_list)
+#         }), 200
+
+#     except Exception as e:
+#         # Ensure rollback is called in case of any database error before the commit
+#         db.session.rollback()
+#         # Log the exception for debugging on the server side
+#         print(f"Error retrieving user projects: {e}") 
+#         return jsonify({"error": "An internal server error occurred.", "details": str(e)}), 500
+
+@user_bp.route('/users/<string:user_id>/projects', methods=['GET'])
+# @jwt_required
+def get_user_all_projects_from_assignments(user_id):
+    """
+    Retrieves ALL projects assigned to a specific user by querying the ProjectAssignments table.
+    No pagination is applied.
+    """
+
+    project_status_filter = request.args.get('status')
+    role_filter = request.args.get('role')
+
+    try:
+        # 1. Base Query
+        query = ProjectAssignments.query.filter(
+            ProjectAssignments.user_id == user_id,
+            ProjectAssignments.is_assigned == True
+        )
+
+        # 2. Role filter
+        if role_filter:
+            query = query.filter(ProjectAssignments.role.ilike(f'%{role_filter}%'))
+
+        assignments = query.all()
+
+        project_list = []
+
+        for assignment in assignments:
+            project = Projects.query.get(assignment.project_id)
+
+            if not project:
+                continue
+
+            # Status filter
+            if project_status_filter and project.status != project_status_filter:
+                continue
+
+            client_name = (
+                project.client.client_name
+                if hasattr(project, 'client') and project.client
+                else None
+            )
+
+            project_list.append({
+                'assignment_id': assignment.assignment_id,
+                'user_role_in_project': assignment.role,
+                'assigned_at': assignment.assigned_at.isoformat() if assignment.assigned_at else None,
+
+                'project_id': project.project_id,
+                'project_name': project.project_name,
+                'location': project.location,
+                'due_date': project.due_date.isoformat() if project.due_date else None,
+                'status': project.status or 'Not Started',
+                'client_name': client_name,
+                'company_id': project.company_id
+            })
+
+        return jsonify({
+            'user_id': user_id,
+            'projects': project_list,
+            'total_projects': len(project_list)
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
     
 
-@user_bp.route("/assign_role", methods=["POST"])
-def assign_role():
-    data = request.json
-    user_id = data.get("user_id")
-    role_id = data.get("role_id")
 
-    if not user_id or not role_id:
-        return jsonify({"error": "user_id and role_id required"}), 400
+#------------------------FOR ADMIN------------------------------
+@user_bp.route('/companies/<string:company_id>/projects', methods=['GET'])
+@jwt_required
+def get_all_projects_for_company(company_id):
+    try:
+        projects = Projects.query.filter_by(company_id=company_id).all()
 
-    # Check if user already has this role
-    existing = UserRole.query.filter_by(user_id=user_id, role_id=role_id).first()
-    if existing:
-        return jsonify({"message": "Role already assigned"}), 200
+        data = [{
+            "project_id": p.project_id,
+            "project_name": p.project_name,
+            "status": p.status,
+            "location": p.location,
+            "due_date": p.due_date.isoformat() if p.due_date else None
+        } for p in projects]
 
-    new_role = UserRole(user_id=user_id, role_id=role_id)
-    db.session.add(new_role)
-    db.session.commit()
+        return jsonify({
+            "company_id": company_id,
+            "total_projects": len(data),
+            "projects": data
+        }), 200
 
-    return jsonify({"message": "Role assigned successfully"}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+
+#-----------------------FOR ADMIN-----------------------------
+# @user_bp.route('/companies/<string:company_id>/projects/<string:project_id>', methods=['GET'])
+# @jwt_required
+# def get_specific_project(company_id, project_id):
+#     try:
+#         project = Projects.query.filter_by(project_id=project_id, company_id=company_id).first()
+
+#         if not project:
+#             return jsonify({"message": "Project not found"}), 404
+
+#         data = {
+#             "project_id": project.project_id,
+#             "project_name": project.project_name,
+#             "status": project.status,
+#             "location": project.location,
+#             "due_date": project.due_date.isoformat() if project.due_date else None
+#         }
+
+#         return jsonify(data), 200
+
+#     except Exception as e:
+#         return jsonify({"error": str(e)}), 500
+
+
+
+
